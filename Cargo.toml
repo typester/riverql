@@ -1,6 +1,11 @@
 [package]
 name = "riverql"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
+wayland-client = "0.29"
+wayland-commons = "0.29"
+
+[build-dependencies]
+wayland-scanner = "0.29"
