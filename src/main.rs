@@ -5,6 +5,8 @@ use async_graphql::{EmptyMutation, Schema};
 use async_graphql_axum::{GraphQL, GraphQLSubscription};
 use axum::{
     Router,
+    extract::State,
+    http::header,
     response::Html,
     routing::{get, get_service},
 };
@@ -17,6 +19,16 @@ async fn graphiql() -> Html<String> {
         .subscription_endpoint("/graphql")
         .finish();
     Html(html)
+}
+
+async fn schema_sdl(State(schema): State<gql::AppSchema>) -> impl axum::response::IntoResponse {
+    (
+        [(
+            header::CONTENT_TYPE,
+            axum::http::HeaderValue::from_static("text/plain; charset=utf-8"),
+        )],
+        schema.sdl(),
+    )
 }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
@@ -35,6 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = Router::new()
         .route("/graphiql", get(graphiql))
+        .route("/schema", get(schema_sdl))
         .route(
             "/graphql",
             get_service(GraphQLSubscription::new(schema.clone()))
