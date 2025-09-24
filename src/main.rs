@@ -1,130 +1,126 @@
-use std::sync::{Arc, Mutex};
+use wayland_client::protocol::{
+    wl_output::WlOutput, wl_registry, wl_registry::WlRegistry, wl_seat::WlSeat,
+};
+use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, delegate_noop};
 
-use wayland_client::protocol::{wl_output::WlOutput, wl_seat::WlSeat};
-use wayland_client::{Display, GlobalManager, Main};
-
-// Generated bindings for river-status protocol
-mod river_status {
-    pub use wayland_client::{
-        sys,
-        AnonymousObject,
-        Interface,
-        Main,
-        MessageGroup,
-        Proxy,
-        ProxyMap,
-        protocol::{wl_output, wl_seat},
-    };
-    pub use wayland_commons::map::{Object, ObjectMetadata};
-    pub use wayland_commons::smallvec;
-    pub use wayland_commons::wire::{Argument, ArgumentType, Message, MessageDesc};
-    include!(concat!(env!("OUT_DIR"), "/river-status-unstable-v1.rs"));
+pub mod river_status {
+    use wayland_client;
+    use wayland_client::protocol::*;
+    pub mod __interfaces {
+        use wayland_client::protocol::__interfaces::*;
+        wayland_scanner::generate_interfaces!("protocol/river-status-unstable-v1.xml");
+    }
+    use self::__interfaces::*;
+    wayland_scanner::generate_client_code!("protocol/river-status-unstable-v1.xml");
 }
 
 use river_status::zriver_output_status_v1::ZriverOutputStatusV1;
 use river_status::zriver_seat_status_v1::ZriverSeatStatusV1;
 use river_status::zriver_status_manager_v1::ZriverStatusManagerV1;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let display = Display::connect_to_env()?;
-    let mut event_queue = display.create_event_queue();
-    let attached_display = display.attach(event_queue.token());
+struct State {
+    outputs: Vec<WlOutput>,
+    seats: Vec<WlSeat>,
+    manager: Option<ZriverStatusManagerV1>,
+    output_statuses: Vec<ZriverOutputStatusV1>,
+    seat_statuses: Vec<ZriverSeatStatusV1>,
+}
 
-    let _registry = attached_display.get_registry();
-    let globals = GlobalManager::new(&attached_display);
-
-    // Gather globals
-    event_queue.sync_roundtrip(&mut (), |_, _, _| {})?;
-
-    // Instantiate river status manager if available
-    let manager: Option<Main<ZriverStatusManagerV1>> = instantiate_if_present(
-        &globals,
-        "zriver_status_manager_v1",
-        4,
-    );
-
-    if manager.is_none() {
-        eprintln!("zriver_status_manager_v1 not available");
-        return Ok(());
-    }
-    let manager = manager.unwrap();
-
-    // Instantiate wl_output and wl_seat objects we will monitor
-    let outputs: Vec<Main<WlOutput>> = instantiate_all::<WlOutput>(&globals, 3);
-    let seats: Vec<Main<WlSeat>> = instantiate_all::<WlSeat>(&globals, 5);
-
-    // Keep status objects alive
-    let output_statuses: Arc<Mutex<Vec<Main<ZriverOutputStatusV1>>>> =
-        Arc::new(Mutex::new(Vec::new()));
-    let seat_statuses: Arc<Mutex<Vec<Main<ZriverSeatStatusV1>>>> =
-        Arc::new(Mutex::new(Vec::new()));
-
-    // Create output status listeners
-    for out in &outputs {
-        let status = manager.get_river_output_status(out);
-        setup_output_status_handlers(&status);
-        output_statuses.lock().unwrap().push(status);
+impl State {
+    fn new() -> Self {
+        Self {
+            outputs: Vec::new(),
+            seats: Vec::new(),
+            manager: None,
+            output_statuses: Vec::new(),
+            seat_statuses: Vec::new(),
+        }
     }
 
-    // Create seat status listeners
-    for seat in &seats {
-        let status = manager.get_river_seat_status(seat);
-        setup_seat_status_handlers(&status);
-        seat_statuses.lock().unwrap().push(status);
+    fn maybe_create_status_for_output(&mut self, qh: &QueueHandle<Self>, out: &WlOutput) {
+        if let Some(ref mgr) = self.manager {
+            let st = mgr.get_river_output_status(out, qh, ());
+            self.output_statuses.push(st);
+        }
     }
 
-    // Roundtrip to receive the initial state
-    event_queue.sync_roundtrip(&mut (), |_, _, _| {})?;
+    fn maybe_create_status_for_seat(&mut self, qh: &QueueHandle<Self>, seat: &WlSeat) {
+        if let Some(ref mgr) = self.manager {
+            let st = mgr.get_river_seat_status(seat, qh, ());
+            self.seat_statuses.push(st);
+        }
+    }
 
-    // Dispatch events forever
-    loop {
-        event_queue.dispatch(&mut (), |_, _, _| {})?;
+    fn create_status_for_all(&mut self, qh: &QueueHandle<Self>) {
+        if self.manager.is_some() {
+            let outs = self.outputs.clone();
+            for o in &outs {
+                self.maybe_create_status_for_output(qh, o);
+            }
+            let seats = self.seats.clone();
+            for s in &seats {
+                self.maybe_create_status_for_seat(qh, s);
+            }
+        }
     }
 }
 
-fn instantiate_if_present<T>(globals: &GlobalManager, name: &str, version: u32) -> Option<Main<T>>
-where
-    T: wayland_client::Interface
-        + std::convert::AsRef<wayland_client::Proxy<T>>
-        + std::convert::From<wayland_client::Proxy<T>>,
-{
-    let offered = globals
-        .list()
-        .iter()
-        .find(|(_, iface, _)| iface.as_str() == name)
-        .map(|(_, _, ver)| *ver);
-    let Some(offered) = offered else { return None; };
-    let ver = version.min(offered);
-    Some(globals.instantiate_exact::<T>(ver).expect("instantiate exact"))
-}
-
-fn instantiate_all<T>(globals: &GlobalManager, version: u32) -> Vec<Main<T>>
-where
-    T: wayland_client::Interface
-        + std::convert::AsRef<wayland_client::Proxy<T>>
-        + std::convert::From<wayland_client::Proxy<T>>,
-{
-    let name = T::NAME;
-    let mut out = Vec::new();
-    for (_, iface, offered_ver) in globals.list().iter().filter(|(_, iface, _)| iface == name) {
-        let ver = version.min(*offered_ver);
-        let inst = globals
-            .instantiate_exact::<T>(ver)
-            .unwrap_or_else(|_| panic!("instantiate {} v{}", name, ver));
-        out.push(inst);
+impl Dispatch<WlRegistry, ()> for State {
+    fn event(
+        state: &mut Self,
+        registry: &WlRegistry,
+        event: wl_registry::Event,
+        _: &(),
+        _conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        match event {
+            wl_registry::Event::Global {
+                name,
+                interface,
+                version,
+            } => match interface.as_str() {
+                "wl_output" => {
+                    let output = registry.bind::<WlOutput, _, _>(name, version.min(3), qh, ());
+                    state.outputs.push(output);
+                    let last = state.outputs.last().unwrap().clone();
+                    state.maybe_create_status_for_output(qh, &last);
+                }
+                "wl_seat" => {
+                    let seat = registry.bind::<WlSeat, _, _>(name, version.min(5), qh, ());
+                    state.seats.push(seat);
+                    let last = state.seats.last().unwrap().clone();
+                    state.maybe_create_status_for_seat(qh, &last);
+                }
+                "zriver_status_manager_v1" => {
+                    let mgr =
+                        registry.bind::<ZriverStatusManagerV1, _, _>(name, version.min(4), qh, ());
+                    state.manager = Some(mgr);
+                    state.create_status_for_all(qh);
+                }
+                _ => {}
+            },
+            wl_registry::Event::GlobalRemove { .. } => {}
+            _ => {}
+        }
     }
-    out
 }
 
-fn setup_output_status_handlers(status: &Main<ZriverOutputStatusV1>) {
-    status.quick_assign(|_status, event, _| {
+impl Dispatch<ZriverOutputStatusV1, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _proxy: &ZriverOutputStatusV1,
+        event: river_status::zriver_output_status_v1::Event,
+        _: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
         use river_status::zriver_output_status_v1::Event;
         match event {
             Event::FocusedTags { tags } => {
                 println!("output: focused_tags=0x{tags:08x}");
             }
             Event::ViewTags { tags } => {
-                // tags is an array of u32 bitfields packed into bytes.
                 let parsed = parse_u32_array(&tags);
                 print!("output: view_tags=[");
                 for (i, v) in parsed.iter().enumerate() {
@@ -146,19 +142,25 @@ fn setup_output_status_handlers(status: &Main<ZriverOutputStatusV1>) {
             }
             _ => {}
         }
-    });
+    }
 }
 
-fn setup_seat_status_handlers(status: &Main<ZriverSeatStatusV1>) {
-    status.quick_assign(|_status, event, _| {
+impl Dispatch<ZriverSeatStatusV1, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _proxy: &ZriverSeatStatusV1,
+        event: river_status::zriver_seat_status_v1::Event,
+        _: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
         use river_status::zriver_seat_status_v1::Event;
         match event {
             Event::FocusedOutput { output } => {
-                // Log object id to distinguish outputs without xdg-output names.
-                println!("seat: focused_output id={}", output.as_ref().id());
+                println!("seat: focused_output id={}", output.id());
             }
             Event::UnfocusedOutput { output } => {
-                println!("seat: unfocused_output id={}", output.as_ref().id());
+                println!("seat: unfocused_output id={}", output.id());
             }
             Event::FocusedView { title } => {
                 println!("seat: focused_view title=\"{title}\"");
@@ -168,8 +170,12 @@ fn setup_seat_status_handlers(status: &Main<ZriverSeatStatusV1>) {
             }
             _ => {}
         }
-    });
+    }
 }
+
+delegate_noop!(State: ignore WlOutput);
+delegate_noop!(State: ignore WlSeat);
+delegate_noop!(State: ignore ZriverStatusManagerV1);
 
 fn parse_u32_array(bytes: &[u8]) -> Vec<u32> {
     let mut v = Vec::new();
@@ -180,4 +186,19 @@ fn parse_u32_array(bytes: &[u8]) -> Vec<u32> {
         i += 4;
     }
     v
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let conn = Connection::connect_to_env()?;
+    let mut state = State::new();
+    let mut event_queue: EventQueue<State> = conn.new_event_queue();
+    let qh = event_queue.handle();
+
+    let display = conn.display();
+    let _registry = display.get_registry(&qh, ());
+
+    event_queue.roundtrip(&mut state)?;
+    loop {
+        event_queue.blocking_dispatch(&mut state)?;
+    }
 }
