@@ -62,7 +62,7 @@ pub enum RiverEvent {
 pub struct GOutputFocusedTags {
     pub tags: i32,
 }
-#[Object]
+#[Object(name = "OutputFocusedTags")]
 impl GOutputFocusedTags {
     async fn tags(&self) -> i32 {
         self.tags
@@ -73,7 +73,7 @@ impl GOutputFocusedTags {
 pub struct GOutputViewTags {
     pub tags: Vec<i32>,
 }
-#[Object]
+#[Object(name = "OutputViewTags")]
 impl GOutputViewTags {
     async fn tags(&self) -> &Vec<i32> {
         &self.tags
@@ -84,7 +84,7 @@ impl GOutputViewTags {
 pub struct GOutputUrgentTags {
     pub tags: i32,
 }
-#[Object]
+#[Object(name = "OutputUrgentTags")]
 impl GOutputUrgentTags {
     async fn tags(&self) -> i32 {
         self.tags
@@ -95,7 +95,7 @@ impl GOutputUrgentTags {
 pub struct GOutputLayoutName {
     pub name: String,
 }
-#[Object]
+#[Object(name = "OutputLayoutName")]
 impl GOutputLayoutName {
     async fn name(&self) -> &str {
         &self.name
@@ -108,7 +108,7 @@ impl GOutputLayoutName {
 pub struct GSeatFocusedOutput {
     pub output_id: ID,
 }
-#[Object]
+#[Object(name = "SeatFocusedOutput")]
 impl GSeatFocusedOutput {
     async fn output_id(&self) -> &ID {
         &self.output_id
@@ -119,7 +119,7 @@ impl GSeatFocusedOutput {
 pub struct GSeatUnfocusedOutput {
     pub output_id: ID,
 }
-#[Object]
+#[Object(name = "SeatUnfocusedOutput")]
 impl GSeatUnfocusedOutput {
     async fn output_id(&self) -> &ID {
         &self.output_id
@@ -130,7 +130,7 @@ impl GSeatUnfocusedOutput {
 pub struct GSeatFocusedView {
     pub title: String,
 }
-#[Object]
+#[Object(name = "SeatFocusedView")]
 impl GSeatFocusedView {
     async fn title(&self) -> &str {
         &self.title
@@ -141,7 +141,7 @@ impl GSeatFocusedView {
 pub struct GSeatMode {
     pub name: String,
 }
-#[Object]
+#[Object(name = "SeatMode")]
 impl GSeatMode {
     async fn name(&self) -> &str {
         &self.name
