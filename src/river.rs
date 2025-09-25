@@ -28,16 +28,45 @@ use wayland_backend::client::ObjectId;
 
 #[derive(Debug, Clone)]
 pub enum Event {
-    OutputFocusedTags { tags: u32 },
-    OutputViewTags { tags: Vec<u32> },
-    OutputUrgentTags { tags: u32 },
-    OutputLayoutName { name: String },
-    OutputLayoutNameClear,
+    OutputFocusedTags {
+        id: ObjectId,
+        name: Option<String>,
+        tags: u32,
+    },
+    OutputViewTags {
+        id: ObjectId,
+        name: Option<String>,
+        tags: Vec<u32>,
+    },
+    OutputUrgentTags {
+        id: ObjectId,
+        name: Option<String>,
+        tags: u32,
+    },
+    OutputLayoutName {
+        id: ObjectId,
+        name: Option<String>,
+        layout: String,
+    },
+    OutputLayoutNameClear {
+        id: ObjectId,
+        name: Option<String>,
+    },
 
-    SeatFocusedOutput { id: ObjectId, name: Option<String> },
-    SeatUnfocusedOutput { id: ObjectId, name: Option<String> },
-    SeatFocusedView { title: String },
-    SeatMode { name: String },
+    SeatFocusedOutput {
+        id: ObjectId,
+        name: Option<String>,
+    },
+    SeatUnfocusedOutput {
+        id: ObjectId,
+        name: Option<String>,
+    },
+    SeatFocusedView {
+        title: String,
+    },
+    SeatMode {
+        name: String,
+    },
 }
 
 struct State {
@@ -48,6 +77,7 @@ struct State {
     seat_statuses: Vec<ZriverSeatStatusV1>,
     tx: UnboundedSender<Event>,
     output_info: HashMap<u32, OutputInfo>,
+    output_status_owner: HashMap<u32, ObjectId>,
 }
 
 impl State {
@@ -60,13 +90,17 @@ impl State {
             seat_statuses: Vec::new(),
             tx,
             output_info: HashMap::new(),
+            output_status_owner: HashMap::new(),
         }
     }
 
     fn maybe_create_status_for_output(&mut self, qh: &QueueHandle<Self>, out: &WlOutput) {
         if let Some(ref mgr) = self.manager {
-            let st = mgr.get_river_output_status(out, qh, ());
-            self.output_statuses.push(st);
+            let status = mgr.get_river_output_status(out, qh, ());
+            let status_id = status.id().protocol_id();
+            let output_id = out.id();
+            self.output_status_owner.insert(status_id, output_id);
+            self.output_statuses.push(status);
         }
         let id = out.id().protocol_id();
         self.output_info.entry(id).or_default();
@@ -208,29 +242,56 @@ impl Dispatch<WlOutput, ()> for State {
 impl Dispatch<ZriverOutputStatusV1, ()> for State {
     fn event(
         state: &mut Self,
-        _proxy: &ZriverOutputStatusV1,
+        status: &ZriverOutputStatusV1,
         event: river_status::zriver_output_status_v1::Event,
         _: &(),
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
         use river_status::zriver_output_status_v1::Event as E;
+        let Some(output_id) = state
+            .output_status_owner
+            .get(&status.id().protocol_id())
+            .cloned()
+        else {
+            return;
+        };
+        let label = state.output_label(&output_id);
         match event {
             E::FocusedTags { tags } => {
-                let _ = state.tx.send(Event::OutputFocusedTags { tags });
+                let _ = state.tx.send(Event::OutputFocusedTags {
+                    id: output_id,
+                    name: label,
+                    tags,
+                });
             }
             E::ViewTags { tags } => {
                 let parsed = parse_u32_array(&tags);
-                let _ = state.tx.send(Event::OutputViewTags { tags: parsed });
+                let _ = state.tx.send(Event::OutputViewTags {
+                    id: output_id,
+                    name: label,
+                    tags: parsed,
+                });
             }
             E::UrgentTags { tags } => {
-                let _ = state.tx.send(Event::OutputUrgentTags { tags });
+                let _ = state.tx.send(Event::OutputUrgentTags {
+                    id: output_id,
+                    name: label,
+                    tags,
+                });
             }
             E::LayoutName { name } => {
-                let _ = state.tx.send(Event::OutputLayoutName { name });
+                let _ = state.tx.send(Event::OutputLayoutName {
+                    id: output_id,
+                    name: label,
+                    layout: name,
+                });
             }
             E::LayoutNameClear => {
-                let _ = state.tx.send(Event::OutputLayoutNameClear);
+                let _ = state.tx.send(Event::OutputLayoutNameClear {
+                    id: output_id,
+                    name: label,
+                });
             }
         }
     }
