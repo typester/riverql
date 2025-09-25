@@ -2,6 +2,13 @@
 name = "riverql"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
+description = "GraphQL bridge and CLI client for the River Wayland compositor"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/typester/riverql"
+keywords = ["river", "wayland", "graphql", "cli"]
+categories = ["command-line-utilities", "web-programming::http-server"]
 
 [dependencies]
 wayland-client = "0.31"
@@ -23,5 +30,3 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 libc = "0.2"
 url = "2"
-
-[build-dependencies]
