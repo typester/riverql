@@ -1,7 +1,12 @@
+use std::collections::HashMap;
+
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use wayland_client::protocol::{
-    wl_output::WlOutput, wl_registry, wl_registry::WlRegistry, wl_seat::WlSeat,
+    wl_output::{self, WlOutput},
+    wl_registry,
+    wl_registry::WlRegistry,
+    wl_seat::WlSeat,
 };
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, delegate_noop};
 
@@ -29,8 +34,8 @@ pub enum Event {
     OutputLayoutName { name: String },
     OutputLayoutNameClear,
 
-    SeatFocusedOutput { id: ObjectId },
-    SeatUnfocusedOutput { id: ObjectId },
+    SeatFocusedOutput { id: ObjectId, name: Option<String> },
+    SeatUnfocusedOutput { id: ObjectId, name: Option<String> },
     SeatFocusedView { title: String },
     SeatMode { name: String },
 }
@@ -42,6 +47,7 @@ struct State {
     output_statuses: Vec<ZriverOutputStatusV1>,
     seat_statuses: Vec<ZriverSeatStatusV1>,
     tx: UnboundedSender<Event>,
+    output_info: HashMap<u32, OutputInfo>,
 }
 
 impl State {
@@ -53,6 +59,7 @@ impl State {
             output_statuses: Vec::new(),
             seat_statuses: Vec::new(),
             tx,
+            output_info: HashMap::new(),
         }
     }
 
@@ -61,6 +68,8 @@ impl State {
             let st = mgr.get_river_output_status(out, qh, ());
             self.output_statuses.push(st);
         }
+        let id = out.id().protocol_id();
+        self.output_info.entry(id).or_default();
     }
 
     fn maybe_create_status_for_seat(&mut self, qh: &QueueHandle<Self>, seat: &WlSeat) {
@@ -82,6 +91,50 @@ impl State {
             }
         }
     }
+
+    fn update_output_info(&mut self, id: &ObjectId, update: impl FnOnce(&mut OutputInfo)) {
+        let entry = self
+            .output_info
+            .entry(id.protocol_id())
+            .or_insert_with(OutputInfo::default);
+        update(entry);
+    }
+
+    fn output_label(&self, id: &ObjectId) -> Option<String> {
+        self.output_info
+            .get(&id.protocol_id())
+            .and_then(|info| info.label())
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+struct OutputInfo {
+    name: Option<String>,
+    description: Option<String>,
+    make: Option<String>,
+    model: Option<String>,
+}
+
+impl OutputInfo {
+    fn label(&self) -> Option<String> {
+        if let Some(name) = &self.name {
+            if !name.is_empty() {
+                return Some(name.clone());
+            }
+        }
+        if let Some(desc) = &self.description {
+            if !desc.is_empty() {
+                return Some(desc.clone());
+            }
+        }
+        match (&self.make, &self.model) {
+            (Some(make), Some(model)) if !make.is_empty() || !model.is_empty() => {
+                Some(format!("{make} {model}").trim().to_string())
+            }
+            (Some(make), None) if !make.is_empty() => Some(make.clone()),
+            _ => None,
+        }
+    }
 }
 
 impl Dispatch<WlRegistry, ()> for State {
@@ -100,7 +153,7 @@ impl Dispatch<WlRegistry, ()> for State {
                 version,
             } => match interface.as_str() {
                 "wl_output" => {
-                    let output = registry.bind::<WlOutput, _, _>(name, version.min(3), qh, ());
+                    let output = registry.bind::<WlOutput, _, _>(name, version.min(4), qh, ());
                     state.outputs.push(output);
                     let last = state.outputs.last().unwrap().clone();
                     state.maybe_create_status_for_output(qh, &last);
@@ -119,6 +172,34 @@ impl Dispatch<WlRegistry, ()> for State {
                 }
                 _ => {}
             },
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<WlOutput, ()> for State {
+    fn event(
+        state: &mut Self,
+        proxy: &WlOutput,
+        event: wl_output::Event,
+        _: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        let id = proxy.id();
+        match event {
+            wl_output::Event::Name { name } => {
+                state.update_output_info(&id, |info| info.name = Some(name));
+            }
+            wl_output::Event::Description { description } => {
+                state.update_output_info(&id, |info| info.description = Some(description));
+            }
+            wl_output::Event::Geometry { make, model, .. } => {
+                state.update_output_info(&id, |info| {
+                    info.make = Some(make);
+                    info.model = Some(model);
+                });
+            }
             _ => {}
         }
     }
@@ -167,12 +248,16 @@ impl Dispatch<ZriverSeatStatusV1, ()> for State {
         use river_status::zriver_seat_status_v1::Event as E;
         match event {
             E::FocusedOutput { output } => {
-                let _ = state.tx.send(Event::SeatFocusedOutput { id: output.id() });
+                let id = output.id();
+                let label = state.output_label(&id);
+                let _ = state.tx.send(Event::SeatFocusedOutput { id, name: label });
             }
             E::UnfocusedOutput { output } => {
+                let id = output.id();
+                let label = state.output_label(&id);
                 let _ = state
                     .tx
-                    .send(Event::SeatUnfocusedOutput { id: output.id() });
+                    .send(Event::SeatUnfocusedOutput { id, name: label });
             }
             E::FocusedView { title } => {
                 let _ = state.tx.send(Event::SeatFocusedView { title });
@@ -184,7 +269,6 @@ impl Dispatch<ZriverSeatStatusV1, ()> for State {
     }
 }
 
-delegate_noop!(State: ignore WlOutput);
 delegate_noop!(State: ignore WlSeat);
 delegate_noop!(State: ignore ZriverStatusManagerV1);
 

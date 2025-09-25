@@ -43,10 +43,16 @@ pub struct RiverSnapshot {
     pub output_view_tags: Option<Vec<i32>>,
     pub output_urgent_tags: Option<i32>,
     pub output_layout_name: Option<String>,
-    pub seat_focused_output: Option<ID>,
-    pub seat_unfocused_output: Option<ID>,
+    pub seat_focused_output: Option<NamedOutputId>,
+    pub seat_unfocused_output: Option<NamedOutputId>,
     pub seat_focused_view: Option<String>,
     pub seat_mode: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct NamedOutputId {
+    pub output_id: ID,
+    pub name: Option<String>,
 }
 
 impl RiverSnapshot {
@@ -69,11 +75,17 @@ impl RiverSnapshot {
             OutputLayoutNameClear => {
                 self.output_layout_name = None;
             }
-            SeatFocusedOutput { id } => {
-                self.seat_focused_output = Some(id_to_graphql(id));
+            SeatFocusedOutput { id, name } => {
+                self.seat_focused_output = Some(NamedOutputId {
+                    output_id: id_to_graphql(id),
+                    name: name.clone(),
+                });
             }
-            SeatUnfocusedOutput { id } => {
-                self.seat_unfocused_output = Some(id_to_graphql(id));
+            SeatUnfocusedOutput { id, name } => {
+                self.seat_unfocused_output = Some(NamedOutputId {
+                    output_id: id_to_graphql(id),
+                    name: name.clone(),
+                });
             }
             SeatFocusedView { title } => {
                 self.seat_focused_view = Some(title.clone());
@@ -168,22 +180,32 @@ impl GOutputLayoutName {
 #[derive(Clone)]
 pub struct GSeatFocusedOutput {
     pub output_id: ID,
+    pub name: Option<String>,
 }
 #[Object(name = "SeatFocusedOutput")]
 impl GSeatFocusedOutput {
     async fn output_id(&self) -> &ID {
         &self.output_id
     }
+
+    async fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
 }
 
 #[derive(Clone)]
 pub struct GSeatUnfocusedOutput {
     pub output_id: ID,
+    pub name: Option<String>,
 }
 #[Object(name = "SeatUnfocusedOutput")]
 impl GSeatUnfocusedOutput {
     async fn output_id(&self) -> &ID {
         &self.output_id
+    }
+
+    async fn name(&self) -> Option<&str> {
+        self.name.as_deref()
     }
 }
 
@@ -230,16 +252,20 @@ impl From<river::Event> for RiverEvent {
             OutputLayoutNameClear => RiverEvent::OutputLayoutName(GOutputLayoutName {
                 name: String::new(),
             }),
-            SeatFocusedOutput { id: output_id } => {
-                RiverEvent::SeatFocusedOutput(GSeatFocusedOutput {
-                    output_id: id_to_graphql(&output_id),
-                })
-            }
-            SeatUnfocusedOutput { id: output_id } => {
-                RiverEvent::SeatUnfocusedOutput(GSeatUnfocusedOutput {
-                    output_id: id_to_graphql(&output_id),
-                })
-            }
+            SeatFocusedOutput {
+                id: output_id,
+                name,
+            } => RiverEvent::SeatFocusedOutput(GSeatFocusedOutput {
+                output_id: id_to_graphql(&output_id),
+                name,
+            }),
+            SeatUnfocusedOutput {
+                id: output_id,
+                name,
+            } => RiverEvent::SeatUnfocusedOutput(GSeatUnfocusedOutput {
+                output_id: id_to_graphql(&output_id),
+                name,
+            }),
             SeatFocusedView { title } => RiverEvent::SeatFocusedView(GSeatFocusedView { title }),
             SeatMode { name } => RiverEvent::SeatMode(GSeatMode { name }),
         }
@@ -303,7 +329,10 @@ impl QueryRoot {
         snapshot
             .seat_focused_output
             .clone()
-            .map(|output_id| GSeatFocusedOutput { output_id })
+            .map(|named| GSeatFocusedOutput {
+                output_id: named.output_id,
+                name: named.name,
+            })
     }
 
     async fn seat_unfocused_output(&self, ctx: &Context<'_>) -> Option<GSeatUnfocusedOutput> {
@@ -314,7 +343,10 @@ impl QueryRoot {
         snapshot
             .seat_unfocused_output
             .clone()
-            .map(|output_id| GSeatUnfocusedOutput { output_id })
+            .map(|named| GSeatUnfocusedOutput {
+                output_id: named.output_id,
+                name: named.name,
+            })
     }
 
     async fn seat_focused_view(&self, ctx: &Context<'_>) -> Option<GSeatFocusedView> {
