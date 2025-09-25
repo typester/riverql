@@ -10,6 +10,14 @@ subscriptions, plus a CLI client for driving `graphql-transport-ws` streams.
 - Real-time subscriptions via `graphql-transport-ws`
 - Lightweight CLI client for ad-hoc GraphQL subscriptions
 
+## Installation
+
+```bash
+cargo install riverql
+```
+
+This installs a `riverql` binary in your Cargo bin directory.
+
 ## Getting Started
 
 Most setups launch the server inside River's init script:
@@ -59,14 +67,6 @@ subscription {
 ```
 
 ### WebSocket Client Mode
-
-### Installing
-
-```bash
-cargo install --path .
-```
-
-This installs a `riverql` binary in your Cargo bin directory.
 
 ### Client mode
 
