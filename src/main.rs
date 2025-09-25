@@ -2,7 +2,7 @@ mod gql;
 mod river;
 
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, IsTerminal, Read};
 
 use anyhow::{Result, bail};
 use argh::FromArgs;
@@ -106,8 +106,12 @@ async fn run_subscriber(endpoint: Option<String>, query_arg: Option<String>) -> 
         Some(q) if q.starts_with('@') => fs::read_to_string(&q[1..])?,
         Some(q) => q,
         None => {
+            let mut stdin = io::stdin();
+            if stdin.is_terminal() {
+                bail!("supply a GraphQL subscription or pipe one into stdin");
+            }
             let mut s = String::new();
-            io::stdin().read_to_string(&mut s)?;
+            stdin.read_to_string(&mut s)?;
             s
         }
     };
