@@ -162,6 +162,10 @@ struct Cli {
     /// inline query or @file for subscription mode; defaults to stdin when omitted
     #[argh(positional)]
     query: Option<String>,
+
+    /// show version information
+    #[argh(switch)]
+    version: bool,
 }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
@@ -180,7 +184,13 @@ async fn main() -> Result<()> {
         listen,
         endpoint,
         query,
+        version,
     } = argh::from_env();
+
+    if version {
+        println!("riverql {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
 
     if server {
         if endpoint.is_some() || query.is_some() {
