@@ -60,16 +60,30 @@ subscription {
 
 ### WebSocket Client Mode
 
-When a widget or script (for example an eww widget) needs data, call the CLI
-without `--server` to run in client mode:
+### Installing
 
 ```bash
-cargo run -- --endpoint unix://$XDG_RUNTIME_DIR/riverql.sock#/graphql 'subscription { riverEvents { __typename } }'
+cargo install --path .
 ```
+
+This installs a `riverql` binary in your Cargo bin directory.
+
+### Client mode
+
+When a widget or script (for example an eww widget) needs data, invoke `riverql`
+without `--server`:
+
+```bash
+riverql 'subscription { riverEvents { __typename } }'
+```
+
+Key points:
 
 - Inline queries or `@file.graphql`
 - Reads stdin when no query argument is supplied
-- Supports `unix://path#/graphql` and `ws://host:port/path` endpoints
+- Uses the default endpoint derived from `--listen`; override with
+  `--endpoint` if needed (supports both `unix://path#/graphql` and
+  `ws://host:port/path` formats)
 
 ### Using with [eww](https://elkowar.github.io/eww/)
 
