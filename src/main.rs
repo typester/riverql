@@ -71,15 +71,20 @@ async fn main() -> Result<()> {
 
 async fn run_daemon() -> Result<()> {
     let (tx, _rx) = broadcast::channel::<river::Event>(1024);
+    let river_state = gql::new_river_state();
     let schema: AppSchema = Schema::build(QueryRoot, EmptyMutation, SubscriptionRoot)
         .data(tx.clone())
+        .data(river_state.clone())
         .finish();
 
     let mut river_rx =
         river::RiverStatus::subscribe().map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let tx_for_events = tx.clone();
+    let state_for_events = river_state.clone();
     tokio::spawn(async move {
         while let Some(ev) = river_rx.recv().await {
-            let _ = tx.send(ev);
+            gql::update_river_state(&state_for_events, &ev);
+            let _ = tx_for_events.send(ev);
         }
     });
 

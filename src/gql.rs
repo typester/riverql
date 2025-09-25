@@ -1,6 +1,7 @@
 use async_graphql::futures_util::future::ready;
 use async_graphql::futures_util::{Stream, StreamExt};
 use async_graphql::{Context, EmptyMutation, Enum, ID, Object, Schema, Subscription, Union};
+use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast::Sender;
 use tokio_stream::wrappers::BroadcastStream;
 
@@ -33,6 +34,66 @@ impl From<&river::Event> for RiverEventType {
             SeatFocusedView { .. } => RiverEventType::SeatFocusedView,
             SeatMode { .. } => RiverEventType::SeatMode,
         }
+    }
+}
+
+#[derive(Default, Clone)]
+pub struct RiverSnapshot {
+    pub output_focused_tags: Option<i32>,
+    pub output_view_tags: Option<Vec<i32>>,
+    pub output_urgent_tags: Option<i32>,
+    pub output_layout_name: Option<String>,
+    pub seat_focused_output: Option<ID>,
+    pub seat_unfocused_output: Option<ID>,
+    pub seat_focused_view: Option<String>,
+    pub seat_mode: Option<String>,
+}
+
+impl RiverSnapshot {
+    pub fn apply_event(&mut self, event: &river::Event) {
+        use river::Event::*;
+        match event {
+            OutputFocusedTags { tags } => {
+                self.output_focused_tags = Some(*tags as i32);
+            }
+            OutputViewTags { tags } => {
+                let converted = tags.iter().map(|v| *v as i32).collect::<Vec<i32>>();
+                self.output_view_tags = Some(converted);
+            }
+            OutputUrgentTags { tags } => {
+                self.output_urgent_tags = Some(*tags as i32);
+            }
+            OutputLayoutName { name } => {
+                self.output_layout_name = Some(name.clone());
+            }
+            OutputLayoutNameClear => {
+                self.output_layout_name = None;
+            }
+            SeatFocusedOutput { id } => {
+                self.seat_focused_output = Some(id_to_graphql(id));
+            }
+            SeatUnfocusedOutput { id } => {
+                self.seat_unfocused_output = Some(id_to_graphql(id));
+            }
+            SeatFocusedView { title } => {
+                self.seat_focused_view = Some(title.clone());
+            }
+            SeatMode { name } => {
+                self.seat_mode = Some(name.clone());
+            }
+        }
+    }
+}
+
+pub type RiverStateHandle = Arc<RwLock<RiverSnapshot>>;
+
+pub fn new_river_state() -> RiverStateHandle {
+    Arc::new(RwLock::new(RiverSnapshot::default()))
+}
+
+pub fn update_river_state(handle: &RiverStateHandle, event: &river::Event) {
+    if let Ok(mut state) = handle.write() {
+        state.apply_event(event);
     }
 }
 
@@ -190,6 +251,89 @@ pub struct QueryRoot;
 impl QueryRoot {
     async fn hello(&self) -> &str {
         "ok"
+    }
+
+    async fn output_focused_tags(&self, ctx: &Context<'_>) -> Option<GOutputFocusedTags> {
+        let handle = ctx.data_unchecked::<RiverStateHandle>();
+        let Ok(snapshot) = handle.read() else {
+            return None;
+        };
+        snapshot
+            .output_focused_tags
+            .map(|tags| GOutputFocusedTags { tags })
+    }
+
+    async fn output_view_tags(&self, ctx: &Context<'_>) -> Option<GOutputViewTags> {
+        let handle = ctx.data_unchecked::<RiverStateHandle>();
+        let Ok(snapshot) = handle.read() else {
+            return None;
+        };
+        snapshot
+            .output_view_tags
+            .clone()
+            .map(|tags| GOutputViewTags { tags })
+    }
+
+    async fn output_urgent_tags(&self, ctx: &Context<'_>) -> Option<GOutputUrgentTags> {
+        let handle = ctx.data_unchecked::<RiverStateHandle>();
+        let Ok(snapshot) = handle.read() else {
+            return None;
+        };
+        snapshot
+            .output_urgent_tags
+            .map(|tags| GOutputUrgentTags { tags })
+    }
+
+    async fn output_layout_name(&self, ctx: &Context<'_>) -> Option<GOutputLayoutName> {
+        let handle = ctx.data_unchecked::<RiverStateHandle>();
+        let Ok(snapshot) = handle.read() else {
+            return None;
+        };
+        snapshot
+            .output_layout_name
+            .clone()
+            .map(|name| GOutputLayoutName { name })
+    }
+
+    async fn seat_focused_output(&self, ctx: &Context<'_>) -> Option<GSeatFocusedOutput> {
+        let handle = ctx.data_unchecked::<RiverStateHandle>();
+        let Ok(snapshot) = handle.read() else {
+            return None;
+        };
+        snapshot
+            .seat_focused_output
+            .clone()
+            .map(|output_id| GSeatFocusedOutput { output_id })
+    }
+
+    async fn seat_unfocused_output(&self, ctx: &Context<'_>) -> Option<GSeatUnfocusedOutput> {
+        let handle = ctx.data_unchecked::<RiverStateHandle>();
+        let Ok(snapshot) = handle.read() else {
+            return None;
+        };
+        snapshot
+            .seat_unfocused_output
+            .clone()
+            .map(|output_id| GSeatUnfocusedOutput { output_id })
+    }
+
+    async fn seat_focused_view(&self, ctx: &Context<'_>) -> Option<GSeatFocusedView> {
+        let handle = ctx.data_unchecked::<RiverStateHandle>();
+        let Ok(snapshot) = handle.read() else {
+            return None;
+        };
+        snapshot
+            .seat_focused_view
+            .clone()
+            .map(|title| GSeatFocusedView { title })
+    }
+
+    async fn seat_mode(&self, ctx: &Context<'_>) -> Option<GSeatMode> {
+        let handle = ctx.data_unchecked::<RiverStateHandle>();
+        let Ok(snapshot) = handle.read() else {
+            return None;
+        };
+        snapshot.seat_mode.clone().map(|name| GSeatMode { name })
     }
 }
 
