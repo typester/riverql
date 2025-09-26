@@ -513,7 +513,7 @@ impl QueryRoot {
 pub struct SubscriptionRoot;
 #[Subscription]
 impl SubscriptionRoot {
-    async fn river_events(
+    async fn events(
         &self,
         ctx: &Context<'_>,
         types: Option<Vec<RiverEventType>>,

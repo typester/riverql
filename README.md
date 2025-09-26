@@ -58,7 +58,7 @@ Subscription example:
 
 ```graphql
 subscription {
-  riverEvents {
+  events {
     __typename
     ... on OutputFocusedTags { outputId name tags }
     ... on SeatFocusedOutput { outputId name }
@@ -74,7 +74,7 @@ When a widget or script (for example an eww widget) needs data, invoke `riverql`
 without `--server`:
 
 ```bash
-riverql 'subscription { riverEvents { __typename } }'
+riverql 'subscription { events { __typename } }'
 ```
 
 Key points:
@@ -107,12 +107,12 @@ Polling a query:
 Listening for live events:
 
 ```clojure
-(deflisten river_events :initial "{}"
-  "riverql 'subscription { riverEvents { __typename ... on OutputFocusedTags { outputId name tags } } }' | jq -c '.data.riverEvents'")
+(deflisten events :initial "{}"
+  "riverql 'subscription { events { __typename ... on OutputFocusedTags { outputId name tags } } }' | jq -c '.data.events'")
 
 (defwidget river-event-feed []
   (box :orientation "vertical"
-    (label :text (format "Latest event: %s" river_events))))
+    (label :text (format "Latest event: %s" events))))
 ```
 
 `defpoll` is ideal for periodic snapshots (e.g. populating a list of outputs),
