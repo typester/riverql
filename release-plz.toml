@@ -1,3 +1,4 @@
-[changelog_config]
-pr_title = true
-conventional_commits = true
+[changelog]
+commit_preprocessors = [
+  { pattern = "^Merge pull request #([0-9]+) from .*?\\n\\n([^\n]+)", replace = "${2} (#${1})" }
+]
