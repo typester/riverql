@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use anyhow::{Result, bail};
 use argh::FromArgs;
+use async_graphql::Schema;
 
 #[cfg(unix)]
 use libc::geteuid;
@@ -166,6 +167,10 @@ struct Cli {
     /// show version information
     #[argh(switch)]
     version: bool,
+
+    /// print GraphQL schema to stdout
+    #[argh(switch)]
+    printschema: bool,
 }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
@@ -185,10 +190,23 @@ async fn main() -> Result<()> {
         endpoint,
         query,
         version,
+        printschema,
     } = argh::from_env();
 
     if version {
         println!("riverql {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
+    if printschema {
+        let schema: Schema<gql::QueryRoot, async_graphql::EmptyMutation, gql::SubscriptionRoot> =
+            Schema::build(
+                gql::QueryRoot,
+                async_graphql::EmptyMutation,
+                gql::SubscriptionRoot,
+            )
+            .finish();
+        println!("{}", schema.sdl());
         return Ok(());
     }
 
