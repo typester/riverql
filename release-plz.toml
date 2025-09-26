@@ -1,0 +1,3 @@
+[changelog_config]
+pr_title = true
+conventional_commits = true
