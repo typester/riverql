@@ -42,7 +42,6 @@ impl From<&river::Event> for RiverEventType {
 pub struct RiverSnapshot {
     pub outputs: HashMap<String, OutputState>,
     pub seat_focused_output: Option<NamedOutputId>,
-    pub seat_unfocused_output: Option<NamedOutputId>,
     pub seat_focused_view: Option<String>,
     pub seat_mode: Option<String>,
 }
@@ -186,11 +185,8 @@ impl RiverSnapshot {
                     name: name.clone(),
                 });
             }
-            SeatUnfocusedOutput { id, name } => {
-                self.seat_unfocused_output = Some(NamedOutputId {
-                    output_id: id_to_graphql(id),
-                    name: name.clone(),
-                });
+            SeatUnfocusedOutput { .. } => {
+                // ignore this. only store focused output in the snapshot
             }
             SeatFocusedView { title } => {
                 self.seat_focused_view = Some(title.clone());
@@ -489,20 +485,6 @@ impl QueryRoot {
             .seat_focused_output
             .clone()
             .map(|named| GSeatFocusedOutput {
-                output_id: named.output_id,
-                name: named.name,
-            })
-    }
-
-    async fn seat_unfocused_output(&self, ctx: &Context<'_>) -> Option<GSeatUnfocusedOutput> {
-        let handle = ctx.data_unchecked::<RiverStateHandle>();
-        let Ok(snapshot) = handle.read() else {
-            return None;
-        };
-        snapshot
-            .seat_unfocused_output
-            .clone()
-            .map(|named| GSeatUnfocusedOutput {
                 output_id: named.output_id,
                 name: named.name,
             })
