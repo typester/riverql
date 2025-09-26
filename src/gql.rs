@@ -41,6 +41,7 @@ impl From<&river::Event> for RiverEventType {
 #[derive(Default, Clone)]
 pub struct RiverSnapshot {
     pub outputs: HashMap<String, OutputState>,
+    output_names: HashMap<String, String>,
     pub seat_focused_output: Option<NamedOutputId>,
     pub seat_focused_view: Option<String>,
     pub seat_mode: Option<String>,
@@ -130,16 +131,25 @@ impl RiverSnapshot {
         let output_id = id_to_graphql(object_id);
         let key = output_id.to_string();
         let mut name_clone = name.clone();
-        let entry = self.outputs.entry(key).or_insert_with(|| OutputState {
-            output_id: output_id.clone(),
-            name: name_clone.clone(),
-            focused_tags: None,
-            view_tags: None,
-            urgent_tags: None,
-            layout_name: None,
-        });
+        let entry = self
+            .outputs
+            .entry(key.clone())
+            .or_insert_with(|| OutputState {
+                output_id: output_id.clone(),
+                name: name_clone.clone(),
+                focused_tags: None,
+                view_tags: None,
+                urgent_tags: None,
+                layout_name: None,
+            });
         entry.output_id = output_id;
         if let Some(name_value) = name_clone.take() {
+            if entry.name.as_ref() != Some(&name_value) {
+                if let Some(old_name) = &entry.name {
+                    self.output_names.remove(old_name);
+                }
+            }
+            self.output_names.insert(name_value.clone(), key);
             entry.name = Some(name_value);
         }
         f(entry);
@@ -195,6 +205,16 @@ impl RiverSnapshot {
                 self.seat_mode = Some(name.clone());
             }
         }
+    }
+
+    pub fn output_by_name(&self, name: &str) -> Option<OutputState> {
+        if let Some(id_key) = self.output_names.get(name) {
+            return self.outputs.get(id_key).cloned();
+        }
+        self.outputs
+            .values()
+            .find(|state| state.name.as_deref() == Some(name))
+            .cloned()
     }
 }
 
@@ -464,16 +484,12 @@ impl QueryRoot {
             .collect::<Vec<_>>()
     }
 
-    async fn output(&self, ctx: &Context<'_>, id: ID) -> Option<GOutputState> {
+    async fn output(&self, ctx: &Context<'_>, name: String) -> Option<GOutputState> {
         let handle = ctx.data_unchecked::<RiverStateHandle>();
         let Ok(snapshot) = handle.read() else {
             return None;
         };
-        snapshot
-            .outputs
-            .get(&id.to_string())
-            .cloned()
-            .map(GOutputState::from)
+        snapshot.output_by_name(&name).map(GOutputState::from)
     }
 
     async fn seat_focused_output(&self, ctx: &Context<'_>) -> Option<GSeatFocusedOutput> {

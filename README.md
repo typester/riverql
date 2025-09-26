@@ -43,14 +43,25 @@ Example query:
 ```graphql
 {
   outputs {
-    outputId
     name
     focusedTags
     viewTags
     urgentTags
     layoutName
   }
-  seatFocusedOutput { outputId name }
+  seatFocusedOutput { name }
+}
+```
+
+Fetch a single output by name when you only care about one:
+
+```graphql
+query ($name: String!) {
+  output(name: $name) {
+    name
+    focusedTags
+    layoutName
+  }
 }
 ```
 
@@ -60,8 +71,8 @@ Subscription example:
 subscription {
   events {
     __typename
-    ... on OutputFocusedTags { outputId name tags }
-    ... on SeatFocusedOutput { outputId name }
+    ... on OutputFocusedTags { name tags }
+    ... on SeatFocusedOutput { name }
   }
 }
 ```
@@ -94,7 +105,7 @@ Polling a query:
 
 ```clojure
 (defpoll river_outputs :interval "5s"
-  "riverql 'query { outputs { outputId name focusedTags } }' | jq -c '.data.outputs'")
+  "riverql 'query { outputs { name focusedTags } }' | jq -c '.data.outputs'")
 
 (defwidget river-tags []
   (box :orientation "vertical"
@@ -108,7 +119,7 @@ Listening for live events:
 
 ```clojure
 (deflisten events :initial "{}"
-  "riverql 'subscription { events { __typename ... on OutputFocusedTags { outputId name tags } } }' | jq -c '.data.events'")
+  "riverql 'subscription { events { __typename ... on OutputFocusedTags { name tags } } }' | jq -c '.data.events'")
 
 (defwidget river-event-feed []
   (box :orientation "vertical"
