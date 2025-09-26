@@ -11,11 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- fix config again
-
-### Other
-
-- add release-plz.toml
+- remove seatUnfocusedOutput from query
 
 ## [0.1.3](https://github.com/typester/riverql/compare/v0.1.2...v0.1.3) - 2025-09-26
 
