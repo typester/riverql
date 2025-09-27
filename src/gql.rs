@@ -63,6 +63,7 @@ pub struct OutputState {
     pub focused_tags: Option<i32>,
     pub focused_tags_list: Option<Vec<i32>>,
     pub view_tags: Option<Vec<i32>>,
+    pub view_tags_list: Option<Vec<i32>>,
     pub urgent_tags: Option<i32>,
     pub urgent_tags_list: Option<Vec<i32>>,
     pub layout_name: Option<String>,
@@ -75,6 +76,7 @@ pub struct GOutputState {
     pub focused_tags: Option<i32>,
     pub focused_tags_list: Option<Vec<i32>>,
     pub view_tags: Option<Vec<i32>>,
+    pub view_tags_list: Option<Vec<i32>>,
     pub urgent_tags: Option<i32>,
     pub urgent_tags_list: Option<Vec<i32>>,
     pub layout_name: Option<String>,
@@ -94,6 +96,7 @@ impl From<&OutputState> for GOutputState {
             focused_tags: state.focused_tags,
             focused_tags_list: state.focused_tags_list.clone(),
             view_tags: state.view_tags.clone(),
+            view_tags_list: state.view_tags_list.clone(),
             urgent_tags: state.urgent_tags,
             urgent_tags_list: state.urgent_tags_list.clone(),
             layout_name: state.layout_name.clone(),
@@ -121,6 +124,10 @@ impl GOutputState {
 
     async fn view_tags(&self) -> Option<&Vec<i32>> {
         self.view_tags.as_ref()
+    }
+
+    async fn view_tags_list(&self) -> Option<&Vec<i32>> {
+        self.view_tags_list.as_ref()
     }
 
     async fn urgent_tags(&self) -> Option<i32> {
@@ -157,6 +164,7 @@ impl RiverSnapshot {
                 focused_tags: None,
                 focused_tags_list: None,
                 view_tags: None,
+                view_tags_list: None,
                 urgent_tags: None,
                 urgent_tags_list: None,
                 layout_name: None,
@@ -186,8 +194,10 @@ impl RiverSnapshot {
             }
             OutputViewTags { id, name, tags } => {
                 let converted = tags.iter().map(|v| *v as i32).collect::<Vec<i32>>();
+                let list = bit_values_to_tags(&converted);
                 self.update_output_state(id, name, move |state| {
-                    state.view_tags = Some(converted);
+                    state.view_tags = Some(converted.clone());
+                    state.view_tags_list = Some(list.clone());
                 });
             }
             OutputUrgentTags { id, name, tags } => {
@@ -274,10 +284,16 @@ impl RiverSnapshot {
 
             if type_allowed(RiverEventType::OutputViewTags) {
                 if let Some(tags) = &state.view_tags {
+                    let tags_list = if include_lists {
+                        state.view_tags_list.clone()
+                    } else {
+                        None
+                    };
                     events.push(RiverEvent::OutputViewTags(GOutputViewTags {
                         output_id: state.output_id.clone(),
                         name: state.name.clone(),
                         tags: tags.clone(),
+                        tags_list,
                     }));
                 }
             }
@@ -487,6 +503,24 @@ fn bitmask_to_tags(mask: u32) -> Vec<i32> {
         .collect()
 }
 
+fn bit_values_to_tags(values: &[i32]) -> Vec<i32> {
+    values
+        .iter()
+        .filter_map(|value| {
+            if *value <= 0 {
+                None
+            } else {
+                let v = *value as u32;
+                if v.is_power_of_two() {
+                    Some(v.trailing_zeros() as i32)
+                } else {
+                    None
+                }
+            }
+        })
+        .collect()
+}
+
 #[derive(Union, Clone)]
 pub enum RiverEvent {
     OutputFocusedTags(GOutputFocusedTags),
@@ -530,11 +564,16 @@ pub struct GOutputViewTags {
     pub output_id: ID,
     pub name: Option<String>,
     pub tags: Vec<i32>,
+    pub tags_list: Option<Vec<i32>>,
 }
 #[Object(name = "OutputViewTags")]
 impl GOutputViewTags {
     async fn tags(&self) -> &Vec<i32> {
         &self.tags
+    }
+
+    async fn tags_list(&self) -> Option<&Vec<i32>> {
+        self.tags_list.as_ref()
     }
 
     async fn output_id(&self) -> &ID {
@@ -670,11 +709,16 @@ fn make_river_event(value: river::Event, include_lists: bool) -> RiverEvent {
             id: output_id,
             name,
             tags,
-        } => RiverEvent::OutputViewTags(GOutputViewTags {
-            output_id: id_to_graphql(&output_id),
-            name,
-            tags: tags.into_iter().map(|v| v as i32).collect::<Vec<i32>>(),
-        }),
+        } => {
+            let tag_values = tags.into_iter().map(|v| v as i32).collect::<Vec<i32>>();
+            let tags_list = include_lists.then(|| bit_values_to_tags(&tag_values));
+            RiverEvent::OutputViewTags(GOutputViewTags {
+                output_id: id_to_graphql(&output_id),
+                name,
+                tags: tag_values,
+                tags_list,
+            })
+        }
         OutputUrgentTags {
             id: output_id,
             name,
@@ -748,6 +792,7 @@ impl QueryRoot {
                 let mut gql = GOutputState::from(state);
                 if !include_lists {
                     gql.focused_tags_list = None;
+                    gql.view_tags_list = None;
                     gql.urgent_tags_list = None;
                 }
                 gql
@@ -770,6 +815,7 @@ impl QueryRoot {
             let mut gql = GOutputState::from(state);
             if !include_lists {
                 gql.focused_tags_list = None;
+                gql.view_tags_list = None;
                 gql.urgent_tags_list = None;
             }
             gql
