@@ -1,7 +1,10 @@
 use async_graphql::futures_util::future::ready;
-use async_graphql::futures_util::{Stream, StreamExt};
-use async_graphql::{Context, EmptyMutation, Enum, ID, Object, Schema, Subscription, Union};
-use std::collections::HashMap;
+use async_graphql::futures_util::{Stream, StreamExt, stream};
+use async_graphql::parser::types::{FragmentDefinition, Selection, SelectionSet};
+use async_graphql::{
+    Context, EmptyMutation, Enum, ID, Name, Object, Positioned, Schema, Subscription, Union,
+};
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast::Sender;
 use tokio_stream::wrappers::BroadcastStream;
@@ -235,6 +238,201 @@ impl RiverSnapshot {
             .values()
             .find(|state| state.name.as_deref() == Some(name))
             .cloned()
+    }
+
+    fn snapshot_events(
+        &self,
+        include_lists: bool,
+        types: Option<&HashSet<RiverEventType>>,
+        output_filter: Option<&str>,
+    ) -> Vec<RiverEvent> {
+        let mut events = Vec::new();
+        let type_allowed = |ty: RiverEventType| types.map_or(true, |set| set.contains(&ty));
+
+        for state in self.outputs.values() {
+            let matches_output =
+                output_filter.map_or(true, |target| state.name.as_deref() == Some(target));
+            if !matches_output {
+                continue;
+            }
+
+            if type_allowed(RiverEventType::OutputFocusedTags) {
+                if let Some(tags) = state.focused_tags {
+                    let tags_list = if include_lists {
+                        state.focused_tags_list.clone()
+                    } else {
+                        None
+                    };
+                    events.push(RiverEvent::OutputFocusedTags(GOutputFocusedTags {
+                        output_id: state.output_id.clone(),
+                        name: state.name.clone(),
+                        tags,
+                        tags_list,
+                    }));
+                }
+            }
+
+            if type_allowed(RiverEventType::OutputViewTags) {
+                if let Some(tags) = &state.view_tags {
+                    events.push(RiverEvent::OutputViewTags(GOutputViewTags {
+                        output_id: state.output_id.clone(),
+                        name: state.name.clone(),
+                        tags: tags.clone(),
+                    }));
+                }
+            }
+
+            if type_allowed(RiverEventType::OutputUrgentTags) {
+                if let Some(tags) = state.urgent_tags {
+                    let tags_list = if include_lists {
+                        state.urgent_tags_list.clone()
+                    } else {
+                        None
+                    };
+                    events.push(RiverEvent::OutputUrgentTags(GOutputUrgentTags {
+                        output_id: state.output_id.clone(),
+                        name: state.name.clone(),
+                        tags,
+                        tags_list,
+                    }));
+                }
+            }
+
+            match &state.layout_name {
+                Some(layout) => {
+                    if type_allowed(RiverEventType::OutputLayoutName) {
+                        events.push(RiverEvent::OutputLayoutName(GOutputLayoutName {
+                            output_id: state.output_id.clone(),
+                            output_name: state.name.clone(),
+                            layout: layout.clone(),
+                        }));
+                    }
+                }
+                None => {
+                    if type_allowed(RiverEventType::OutputLayoutNameClear) {
+                        events.push(RiverEvent::OutputLayoutName(GOutputLayoutName {
+                            output_id: state.output_id.clone(),
+                            output_name: state.name.clone(),
+                            layout: String::new(),
+                        }));
+                    }
+                }
+            }
+        }
+
+        if type_allowed(RiverEventType::SeatFocusedOutput) {
+            if let Some(named) = &self.seat_focused_output {
+                let matches_output =
+                    output_filter.map_or(true, |target| named.name.as_deref() == Some(target));
+                if matches_output {
+                    events.push(RiverEvent::SeatFocusedOutput(GSeatFocusedOutput {
+                        output_id: named.output_id.clone(),
+                        name: named.name.clone(),
+                    }));
+                }
+            }
+        }
+
+        if type_allowed(RiverEventType::SeatFocusedView) {
+            if let Some(title) = &self.seat_focused_view {
+                events.push(RiverEvent::SeatFocusedView(GSeatFocusedView {
+                    title: title.clone(),
+                }));
+            }
+        }
+
+        if type_allowed(RiverEventType::SeatMode) {
+            if let Some(name) = &self.seat_mode {
+                events.push(RiverEvent::SeatMode(GSeatMode { name: name.clone() }));
+            }
+        }
+
+        events
+    }
+}
+
+fn collect_requested_event_types(
+    fragments: &HashMap<Name, Positioned<FragmentDefinition>>,
+    selection_set: &SelectionSet,
+    out: &mut HashSet<RiverEventType>,
+    visited: &mut HashSet<Name>,
+) {
+    for selection in &selection_set.items {
+        match &selection.node {
+            Selection::Field(field) => {
+                collect_requested_event_types(
+                    fragments,
+                    &field.node.selection_set.node,
+                    out,
+                    visited,
+                );
+            }
+            Selection::InlineFragment(fragment) => {
+                if let Some(condition) = &fragment.node.type_condition {
+                    for ty in event_types_for_name(condition.node.on.node.as_str()) {
+                        out.insert(ty);
+                    }
+                }
+                collect_requested_event_types(
+                    fragments,
+                    &fragment.node.selection_set.node,
+                    out,
+                    visited,
+                );
+            }
+            Selection::FragmentSpread(spread) => {
+                let name = spread.node.fragment_name.node.clone();
+                if !visited.insert(name.clone()) {
+                    continue;
+                }
+                if let Some(fragment) = fragments.get(&name) {
+                    for ty in
+                        event_types_for_name(fragment.node.type_condition.node.on.node.as_str())
+                    {
+                        out.insert(ty);
+                    }
+                    collect_requested_event_types(
+                        fragments,
+                        &fragment.node.selection_set.node,
+                        out,
+                        visited,
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn requested_event_types(ctx: &Context<'_>) -> Option<HashSet<RiverEventType>> {
+    let selection_set = &ctx.item.node.selection_set.node;
+    if selection_set.items.is_empty() {
+        return None;
+    }
+    let mut out = HashSet::new();
+    let mut visited = HashSet::new();
+    collect_requested_event_types(
+        &ctx.query_env.fragments,
+        selection_set,
+        &mut out,
+        &mut visited,
+    );
+    if out.is_empty() { None } else { Some(out) }
+}
+
+fn event_types_for_name(name: &str) -> Vec<RiverEventType> {
+    match name {
+        "OutputFocusedTags" => vec![RiverEventType::OutputFocusedTags],
+        "OutputViewTags" => vec![RiverEventType::OutputViewTags],
+        "OutputUrgentTags" => vec![RiverEventType::OutputUrgentTags],
+        "OutputLayoutName" => vec![
+            RiverEventType::OutputLayoutName,
+            RiverEventType::OutputLayoutNameClear,
+        ],
+        "SeatFocusedOutput" => vec![RiverEventType::SeatFocusedOutput],
+        "SeatUnfocusedOutput" => vec![RiverEventType::SeatUnfocusedOutput],
+        "SeatFocusedView" => vec![RiverEventType::SeatFocusedView],
+        "SeatMode" => vec![RiverEventType::SeatMode],
+        _ => Vec::new(),
     }
 }
 
@@ -624,14 +822,23 @@ impl SubscriptionRoot {
         let sender = ctx.data_unchecked::<Sender<river::Event>>().clone();
         let rx = sender.subscribe();
         let include_lists = tag_list.unwrap_or(false);
-        let tset = types.map(|v| v.into_iter().collect::<std::collections::HashSet<_>>());
-        BroadcastStream::new(rx).filter_map(move |item| {
-            let include_lists = include_lists;
+        let tset = types
+            .map(|v| v.into_iter().collect::<HashSet<_>>())
+            .or_else(|| requested_event_types(ctx));
+        let initial_events = {
+            let handle = ctx.data_unchecked::<RiverStateHandle>();
+            match handle.read() {
+                Ok(snapshot) => snapshot.snapshot_events(include_lists, tset.as_ref(), None),
+                Err(_) => Vec::new(),
+            }
+        };
+        let tset_for_updates = tset.clone();
+        let updates = BroadcastStream::new(rx).filter_map(move |item| {
             let e = match item {
                 Ok(ev) => ev,
                 Err(_) => return ready(None),
             };
-            let pass = tset
+            let pass = tset_for_updates
                 .as_ref()
                 .map_or(true, |ts| ts.contains(&RiverEventType::from(&e)));
             if pass {
@@ -639,7 +846,8 @@ impl SubscriptionRoot {
             } else {
                 ready(None)
             }
-        })
+        });
+        stream::iter(initial_events.into_iter()).chain(updates)
     }
 
     async fn events_for_output(
@@ -651,16 +859,29 @@ impl SubscriptionRoot {
     ) -> impl Stream<Item = RiverEvent> {
         let sender = ctx.data_unchecked::<Sender<river::Event>>().clone();
         let rx = sender.subscribe();
-        let target_output = output_name;
         let include_lists = tag_list.unwrap_or(false);
-        let tset = types.map(|v| v.into_iter().collect::<std::collections::HashSet<_>>());
-        BroadcastStream::new(rx).filter_map(move |item| {
-            let include_lists = include_lists;
+        let tset = types
+            .map(|v| v.into_iter().collect::<HashSet<_>>())
+            .or_else(|| requested_event_types(ctx));
+        let target_output = output_name;
+        let initial_events = {
+            let handle = ctx.data_unchecked::<RiverStateHandle>();
+            match handle.read() {
+                Ok(snapshot) => snapshot.snapshot_events(
+                    include_lists,
+                    tset.as_ref(),
+                    Some(target_output.as_str()),
+                ),
+                Err(_) => Vec::new(),
+            }
+        };
+        let tset_for_updates = tset.clone();
+        let updates = BroadcastStream::new(rx).filter_map(move |item| {
             let e = match item {
                 Ok(ev) => ev,
                 Err(_) => return ready(None),
             };
-            let type_pass = tset
+            let type_pass = tset_for_updates
                 .as_ref()
                 .map_or(true, |ts| ts.contains(&RiverEventType::from(&e)));
             let output_pass = event_matches_output_name(&e, &target_output);
@@ -669,7 +890,8 @@ impl SubscriptionRoot {
             } else {
                 ready(None)
             }
-        })
+        });
+        stream::iter(initial_events.into_iter()).chain(updates)
     }
 }
 
