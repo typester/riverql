@@ -230,6 +230,52 @@ pub fn update_river_state(handle: &RiverStateHandle, event: &river::Event) {
     }
 }
 
+fn event_output_id(event: &river::Event) -> Option<&wayland_backend::client::ObjectId> {
+    use river::Event::*;
+
+    match event {
+        OutputFocusedTags { id, .. }
+        | OutputViewTags { id, .. }
+        | OutputUrgentTags { id, .. }
+        | OutputLayoutName { id, .. }
+        | OutputLayoutNameClear { id, .. }
+        | SeatFocusedOutput { id, .. }
+        | SeatUnfocusedOutput { id, .. } => Some(id),
+        _ => None,
+    }
+}
+
+fn event_output_name<'a>(event: &'a river::Event) -> Option<&'a str> {
+    use river::Event::*;
+
+    match event {
+        OutputFocusedTags { name, .. }
+        | OutputViewTags { name, .. }
+        | OutputUrgentTags { name, .. }
+        | OutputLayoutName { name, .. }
+        | OutputLayoutNameClear { name, .. }
+        | SeatFocusedOutput { name, .. }
+        | SeatUnfocusedOutput { name, .. } => name.as_deref(),
+        _ => None,
+    }
+}
+
+fn event_matches_output_name(event: &river::Event, target: &str) -> bool {
+    use river::Event::*;
+
+    match event {
+        // Seat events are always matched
+        SeatFocusedView { .. } | SeatMode { .. } => true,
+        _ => {
+            if let Some(name) = event_output_name(event) {
+                name == target
+            } else {
+                false
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct OutputIdPayload {
     pub output_id: String,
@@ -546,6 +592,33 @@ impl SubscriptionRoot {
                 .as_ref()
                 .map_or(true, |ts| ts.contains(&RiverEventType::from(&e)));
             if pass {
+                ready(Some(RiverEvent::from(e)))
+            } else {
+                ready(None)
+            }
+        })
+    }
+
+    async fn events_for_output(
+        &self,
+        ctx: &Context<'_>,
+        output_name: String,
+        types: Option<Vec<RiverEventType>>,
+    ) -> impl Stream<Item = RiverEvent> {
+        let sender = ctx.data_unchecked::<Sender<river::Event>>().clone();
+        let rx = sender.subscribe();
+        let target_output = output_name;
+        let tset = types.map(|v| v.into_iter().collect::<std::collections::HashSet<_>>());
+        BroadcastStream::new(rx).filter_map(move |item| {
+            let e = match item {
+                Ok(ev) => ev,
+                Err(_) => return ready(None),
+            };
+            let type_pass = tset
+                .as_ref()
+                .map_or(true, |ts| ts.contains(&RiverEventType::from(&e)));
+            let output_pass = event_matches_output_name(&e, &target_output);
+            if type_pass && output_pass {
                 ready(Some(RiverEvent::from(e)))
             } else {
                 ready(None)

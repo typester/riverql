@@ -77,6 +77,17 @@ subscription {
 }
 ```
 
+To watch a single output, filter by its human-readable name:
+
+```graphql
+subscription ($name: String!) {
+  eventsForOutput(outputName: $name) {
+    __typename
+    ... on OutputFocusedTags { name tags }
+  }
+}
+```
+
 ### WebSocket Client Mode
 
 ### Client mode
