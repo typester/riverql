@@ -230,21 +230,6 @@ pub fn update_river_state(handle: &RiverStateHandle, event: &river::Event) {
     }
 }
 
-fn event_output_id(event: &river::Event) -> Option<&wayland_backend::client::ObjectId> {
-    use river::Event::*;
-
-    match event {
-        OutputFocusedTags { id, .. }
-        | OutputViewTags { id, .. }
-        | OutputUrgentTags { id, .. }
-        | OutputLayoutName { id, .. }
-        | OutputLayoutNameClear { id, .. }
-        | SeatFocusedOutput { id, .. }
-        | SeatUnfocusedOutput { id, .. } => Some(id),
-        _ => None,
-    }
-}
-
 fn event_output_name<'a>(event: &'a river::Event) -> Option<&'a str> {
     use river::Event::*;
 
@@ -274,16 +259,6 @@ fn event_matches_output_name(event: &river::Event, target: &str) -> bool {
             }
         }
     }
-}
-
-#[derive(Clone)]
-pub struct OutputIdPayload {
-    pub output_id: String,
-}
-
-#[derive(Clone)]
-pub struct SeatIdPayload {
-    pub seat_id: String,
 }
 
 #[derive(Union, Clone)]
