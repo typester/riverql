@@ -56,10 +56,11 @@ Example query:
 Fetch a single output by name when you only care about one:
 
 ```graphql
-query ($name: String!) {
-  output(name: $name) {
+query ($name: String!, $tagList: Boolean = true) {
+  output(name: $name, tagList: $tagList) {
     name
     focusedTags
+    focusedTagsList
     layoutName
   }
 }
@@ -77,20 +78,37 @@ subscription {
 }
 ```
 
-To watch a single output, filter by its human-readable name:
+
+## Working with Tag Lists
+
+By default RiverQL exposes tag bitmasks as river does. Some environments — notably [eww](https://elkowar.github.io/eww/) —
+struggle with bit operations, so any query or subscription can opt into decoded
+lists by passing `tagList: true`.
+When enabled, `focusedTagsList` / `urgentTagsList` fields become non-null while
+the original mask fields remain available for backward compatibility.
 
 ```graphql
-subscription ($name: String!) {
-  eventsForOutput(outputName: $name) {
-    __typename
-    ... on OutputFocusedTags { name tags }
+query ($tagList: Boolean = true) {
+  outputs(tagList: $tagList) {
+    name
+    focusedTags
+    focusedTagsList
+    urgentTags
+    urgentTagsList
   }
 }
 ```
 
-### WebSocket Client Mode
+```graphql
+subscription ($name: String!, $tagList: Boolean = true) {
+  eventsForOutput(outputName: $name, tagList: $tagList) {
+    __typename
+    ... on OutputFocusedTags { name tags tagsList }
+  }
+}
+```
 
-### Client mode
+### Client Mode
 
 When a widget or script (for example an eww widget) needs data, invoke `riverql`
 without `--server`:
@@ -116,7 +134,7 @@ Polling a query:
 
 ```clojure
 (defpoll river_outputs :interval "5s"
-  "riverql 'query { outputs { name focusedTags } }' | jq -c '.data.outputs'")
+  "riverql 'query { outputs { name focusedTags } }' | jq --unbuffered -c '.data.outputs'")
 
 (defwidget river-tags []
   (box :orientation "vertical"
@@ -130,7 +148,7 @@ Listening for live events:
 
 ```clojure
 (deflisten events :initial "{}"
-  "riverql 'subscription { events { __typename ... on OutputFocusedTags { name tags } } }' | jq -c '.data.events'")
+  "riverql 'subscription { events { __typename ... on OutputFocusedTags { name tags } } }' | jq --unbuffered  -c '.data.events'")
 
 (defwidget river-event-feed []
   (box :orientation "vertical"
