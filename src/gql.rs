@@ -41,6 +41,7 @@ impl From<&river::Event> for RiverEventType {
 #[derive(Default, Clone)]
 pub struct RiverSnapshot {
     pub outputs: HashMap<String, OutputState>,
+    output_names: HashMap<String, String>,
     pub seat_focused_output: Option<NamedOutputId>,
     pub seat_focused_view: Option<String>,
     pub seat_mode: Option<String>,
@@ -57,8 +58,10 @@ pub struct OutputState {
     pub output_id: ID,
     pub name: Option<String>,
     pub focused_tags: Option<i32>,
+    pub focused_tags_list: Option<Vec<i32>>,
     pub view_tags: Option<Vec<i32>>,
     pub urgent_tags: Option<i32>,
+    pub urgent_tags_list: Option<Vec<i32>>,
     pub layout_name: Option<String>,
 }
 
@@ -67,8 +70,10 @@ pub struct GOutputState {
     pub output_id: ID,
     pub name: Option<String>,
     pub focused_tags: Option<i32>,
+    pub focused_tags_list: Option<Vec<i32>>,
     pub view_tags: Option<Vec<i32>>,
     pub urgent_tags: Option<i32>,
+    pub urgent_tags_list: Option<Vec<i32>>,
     pub layout_name: Option<String>,
 }
 
@@ -84,8 +89,10 @@ impl From<&OutputState> for GOutputState {
             output_id: state.output_id.clone(),
             name: state.name.clone(),
             focused_tags: state.focused_tags,
+            focused_tags_list: state.focused_tags_list.clone(),
             view_tags: state.view_tags.clone(),
             urgent_tags: state.urgent_tags,
+            urgent_tags_list: state.urgent_tags_list.clone(),
             layout_name: state.layout_name.clone(),
         }
     }
@@ -105,12 +112,20 @@ impl GOutputState {
         self.focused_tags
     }
 
+    async fn focused_tags_list(&self) -> Option<&Vec<i32>> {
+        self.focused_tags_list.as_ref()
+    }
+
     async fn view_tags(&self) -> Option<&Vec<i32>> {
         self.view_tags.as_ref()
     }
 
     async fn urgent_tags(&self) -> Option<i32> {
         self.urgent_tags
+    }
+
+    async fn urgent_tags_list(&self) -> Option<&Vec<i32>> {
+        self.urgent_tags_list.as_ref()
     }
 
     async fn layout_name(&self) -> Option<&str> {
@@ -130,16 +145,27 @@ impl RiverSnapshot {
         let output_id = id_to_graphql(object_id);
         let key = output_id.to_string();
         let mut name_clone = name.clone();
-        let entry = self.outputs.entry(key).or_insert_with(|| OutputState {
-            output_id: output_id.clone(),
-            name: name_clone.clone(),
-            focused_tags: None,
-            view_tags: None,
-            urgent_tags: None,
-            layout_name: None,
-        });
+        let entry = self
+            .outputs
+            .entry(key.clone())
+            .or_insert_with(|| OutputState {
+                output_id: output_id.clone(),
+                name: name_clone.clone(),
+                focused_tags: None,
+                focused_tags_list: None,
+                view_tags: None,
+                urgent_tags: None,
+                urgent_tags_list: None,
+                layout_name: None,
+            });
         entry.output_id = output_id;
         if let Some(name_value) = name_clone.take() {
+            if entry.name.as_ref() != Some(&name_value) {
+                if let Some(old_name) = &entry.name {
+                    self.output_names.remove(old_name);
+                }
+            }
+            self.output_names.insert(name_value.clone(), key);
             entry.name = Some(name_value);
         }
         f(entry);
@@ -149,8 +175,10 @@ impl RiverSnapshot {
         use river::Event::*;
         match event {
             OutputFocusedTags { id, name, tags } => {
-                self.update_output_state(id, name, |state| {
+                let list = bitmask_to_tags(*tags);
+                self.update_output_state(id, name, move |state| {
                     state.focused_tags = Some(*tags as i32);
+                    state.focused_tags_list = Some(list);
                 });
             }
             OutputViewTags { id, name, tags } => {
@@ -160,8 +188,10 @@ impl RiverSnapshot {
                 });
             }
             OutputUrgentTags { id, name, tags } => {
-                self.update_output_state(id, name, |state| {
+                let list = bitmask_to_tags(*tags);
+                self.update_output_state(id, name, move |state| {
                     state.urgent_tags = Some(*tags as i32);
+                    state.urgent_tags_list = Some(list);
                 });
             }
             OutputLayoutName {
@@ -196,6 +226,16 @@ impl RiverSnapshot {
             }
         }
     }
+
+    pub fn output_by_name(&self, name: &str) -> Option<OutputState> {
+        if let Some(id_key) = self.output_names.get(name) {
+            return self.outputs.get(id_key).cloned();
+        }
+        self.outputs
+            .values()
+            .find(|state| state.name.as_deref() == Some(name))
+            .cloned()
+    }
 }
 
 pub type RiverStateHandle = Arc<RwLock<RiverSnapshot>>;
@@ -210,14 +250,43 @@ pub fn update_river_state(handle: &RiverStateHandle, event: &river::Event) {
     }
 }
 
-#[derive(Clone)]
-pub struct OutputIdPayload {
-    pub output_id: String,
+fn event_output_name<'a>(event: &'a river::Event) -> Option<&'a str> {
+    use river::Event::*;
+
+    match event {
+        OutputFocusedTags { name, .. }
+        | OutputViewTags { name, .. }
+        | OutputUrgentTags { name, .. }
+        | OutputLayoutName { name, .. }
+        | OutputLayoutNameClear { name, .. }
+        | SeatFocusedOutput { name, .. }
+        | SeatUnfocusedOutput { name, .. } => name.as_deref(),
+
+        SeatFocusedView { .. } | SeatMode { .. } => unreachable!(),
+    }
 }
 
-#[derive(Clone)]
-pub struct SeatIdPayload {
-    pub seat_id: String,
+fn event_matches_output_name(event: &river::Event, target: &str) -> bool {
+    use river::Event::*;
+
+    match event {
+        // Seat events are always matched
+        SeatFocusedView { .. } | SeatMode { .. } => true,
+        _ => {
+            if let Some(name) = event_output_name(event) {
+                name == target
+            } else {
+                false
+            }
+        }
+    }
+}
+
+fn bitmask_to_tags(mask: u32) -> Vec<i32> {
+    (0..32)
+        .filter(|bit| (mask & (1 << bit)) != 0)
+        .map(|bit| bit as i32)
+        .collect()
 }
 
 #[derive(Union, Clone)]
@@ -237,11 +306,16 @@ pub struct GOutputFocusedTags {
     pub output_id: ID,
     pub name: Option<String>,
     pub tags: i32,
+    pub tags_list: Option<Vec<i32>>,
 }
 #[Object(name = "OutputFocusedTags")]
 impl GOutputFocusedTags {
     async fn tags(&self) -> i32 {
         self.tags
+    }
+
+    async fn tags_list(&self) -> Option<&Vec<i32>> {
+        self.tags_list.as_ref()
     }
 
     async fn output_id(&self) -> &ID {
@@ -279,11 +353,16 @@ pub struct GOutputUrgentTags {
     pub output_id: ID,
     pub name: Option<String>,
     pub tags: i32,
+    pub tags_list: Option<Vec<i32>>,
 }
 #[Object(name = "OutputUrgentTags")]
 impl GOutputUrgentTags {
     async fn tags(&self) -> i32 {
         self.tags
+    }
+
+    async fn tags_list(&self) -> Option<&Vec<i32>> {
+        self.tags_list.as_ref()
     }
 
     async fn output_id(&self) -> &ID {
@@ -376,71 +455,77 @@ fn id_to_graphql(id: &wayland_backend::client::ObjectId) -> ID {
     ID(id.to_string())
 }
 
+fn make_river_event(value: river::Event, include_lists: bool) -> RiverEvent {
+    use river::Event::*;
+    match value {
+        OutputFocusedTags {
+            id: output_id,
+            name,
+            tags,
+        } => RiverEvent::OutputFocusedTags(GOutputFocusedTags {
+            output_id: id_to_graphql(&output_id),
+            name,
+            tags: tags as i32,
+            tags_list: include_lists.then(|| bitmask_to_tags(tags)),
+        }),
+        OutputViewTags {
+            id: output_id,
+            name,
+            tags,
+        } => RiverEvent::OutputViewTags(GOutputViewTags {
+            output_id: id_to_graphql(&output_id),
+            name,
+            tags: tags.into_iter().map(|v| v as i32).collect::<Vec<i32>>(),
+        }),
+        OutputUrgentTags {
+            id: output_id,
+            name,
+            tags,
+        } => RiverEvent::OutputUrgentTags(GOutputUrgentTags {
+            output_id: id_to_graphql(&output_id),
+            name,
+            tags: tags as i32,
+            tags_list: include_lists.then(|| bitmask_to_tags(tags)),
+        }),
+        OutputLayoutName {
+            id: output_id,
+            name,
+            layout,
+        } => RiverEvent::OutputLayoutName(GOutputLayoutName {
+            output_id: id_to_graphql(&output_id),
+            output_name: name,
+            layout,
+        }),
+        OutputLayoutNameClear {
+            id: output_id,
+            name,
+        } => RiverEvent::OutputLayoutName(GOutputLayoutName {
+            output_id: id_to_graphql(&output_id),
+            output_name: name,
+            layout: String::new(),
+        }),
+        SeatFocusedOutput {
+            id: output_id,
+            name,
+        } => RiverEvent::SeatFocusedOutput(GSeatFocusedOutput {
+            output_id: id_to_graphql(&output_id),
+            name,
+        }),
+        SeatUnfocusedOutput {
+            id: output_id,
+            name,
+        } => RiverEvent::SeatUnfocusedOutput(GSeatUnfocusedOutput {
+            output_id: id_to_graphql(&output_id),
+            name,
+        }),
+        SeatFocusedView { title } => RiverEvent::SeatFocusedView(GSeatFocusedView { title }),
+        SeatMode { name } => RiverEvent::SeatMode(GSeatMode { name }),
+    }
+}
+
 impl From<river::Event> for RiverEvent {
     fn from(value: river::Event) -> Self {
-        use river::Event::*;
-        match value {
-            OutputFocusedTags {
-                id: output_id,
-                name,
-                tags,
-            } => RiverEvent::OutputFocusedTags(GOutputFocusedTags {
-                output_id: id_to_graphql(&output_id),
-                name,
-                tags: tags as i32,
-            }),
-            OutputViewTags {
-                id: output_id,
-                name,
-                tags,
-            } => RiverEvent::OutputViewTags(GOutputViewTags {
-                output_id: id_to_graphql(&output_id),
-                name,
-                tags: tags.into_iter().map(|v| v as i32).collect::<Vec<i32>>(),
-            }),
-            OutputUrgentTags {
-                id: output_id,
-                name,
-                tags,
-            } => RiverEvent::OutputUrgentTags(GOutputUrgentTags {
-                output_id: id_to_graphql(&output_id),
-                name,
-                tags: tags as i32,
-            }),
-            OutputLayoutName {
-                id: output_id,
-                name,
-                layout,
-            } => RiverEvent::OutputLayoutName(GOutputLayoutName {
-                output_id: id_to_graphql(&output_id),
-                output_name: name,
-                layout,
-            }),
-            OutputLayoutNameClear {
-                id: output_id,
-                name,
-            } => RiverEvent::OutputLayoutName(GOutputLayoutName {
-                output_id: id_to_graphql(&output_id),
-                output_name: name,
-                layout: String::new(),
-            }),
-            SeatFocusedOutput {
-                id: output_id,
-                name,
-            } => RiverEvent::SeatFocusedOutput(GSeatFocusedOutput {
-                output_id: id_to_graphql(&output_id),
-                name,
-            }),
-            SeatUnfocusedOutput {
-                id: output_id,
-                name,
-            } => RiverEvent::SeatUnfocusedOutput(GSeatUnfocusedOutput {
-                output_id: id_to_graphql(&output_id),
-                name,
-            }),
-            SeatFocusedView { title } => RiverEvent::SeatFocusedView(GSeatFocusedView { title }),
-            SeatMode { name } => RiverEvent::SeatMode(GSeatMode { name }),
-        }
+        make_river_event(value, false)
     }
 }
 
@@ -451,7 +536,8 @@ impl QueryRoot {
         "ok"
     }
 
-    async fn outputs(&self, ctx: &Context<'_>) -> Vec<GOutputState> {
+    async fn outputs(&self, ctx: &Context<'_>, tag_list: Option<bool>) -> Vec<GOutputState> {
+        let include_lists = tag_list.unwrap_or(false);
         let handle = ctx.data_unchecked::<RiverStateHandle>();
         let Ok(snapshot) = handle.read() else {
             return Vec::new();
@@ -460,20 +546,36 @@ impl QueryRoot {
             .outputs
             .values()
             .cloned()
-            .map(GOutputState::from)
+            .map(|state| {
+                let mut gql = GOutputState::from(state);
+                if !include_lists {
+                    gql.focused_tags_list = None;
+                    gql.urgent_tags_list = None;
+                }
+                gql
+            })
             .collect::<Vec<_>>()
     }
 
-    async fn output(&self, ctx: &Context<'_>, id: ID) -> Option<GOutputState> {
+    async fn output(
+        &self,
+        ctx: &Context<'_>,
+        name: String,
+        tag_list: Option<bool>,
+    ) -> Option<GOutputState> {
+        let include_lists = tag_list.unwrap_or(false);
         let handle = ctx.data_unchecked::<RiverStateHandle>();
         let Ok(snapshot) = handle.read() else {
             return None;
         };
-        snapshot
-            .outputs
-            .get(&id.to_string())
-            .cloned()
-            .map(GOutputState::from)
+        snapshot.output_by_name(&name).map(|state| {
+            let mut gql = GOutputState::from(state);
+            if !include_lists {
+                gql.focused_tags_list = None;
+                gql.urgent_tags_list = None;
+            }
+            gql
+        })
     }
 
     async fn seat_focused_output(&self, ctx: &Context<'_>) -> Option<GSeatFocusedOutput> {
@@ -513,15 +615,18 @@ impl QueryRoot {
 pub struct SubscriptionRoot;
 #[Subscription]
 impl SubscriptionRoot {
-    async fn river_events(
+    async fn events(
         &self,
         ctx: &Context<'_>,
         types: Option<Vec<RiverEventType>>,
+        tag_list: Option<bool>,
     ) -> impl Stream<Item = RiverEvent> {
         let sender = ctx.data_unchecked::<Sender<river::Event>>().clone();
         let rx = sender.subscribe();
+        let include_lists = tag_list.unwrap_or(false);
         let tset = types.map(|v| v.into_iter().collect::<std::collections::HashSet<_>>());
         BroadcastStream::new(rx).filter_map(move |item| {
+            let include_lists = include_lists;
             let e = match item {
                 Ok(ev) => ev,
                 Err(_) => return ready(None),
@@ -530,7 +635,37 @@ impl SubscriptionRoot {
                 .as_ref()
                 .map_or(true, |ts| ts.contains(&RiverEventType::from(&e)));
             if pass {
-                ready(Some(RiverEvent::from(e)))
+                ready(Some(make_river_event(e, include_lists)))
+            } else {
+                ready(None)
+            }
+        })
+    }
+
+    async fn events_for_output(
+        &self,
+        ctx: &Context<'_>,
+        output_name: String,
+        types: Option<Vec<RiverEventType>>,
+        tag_list: Option<bool>,
+    ) -> impl Stream<Item = RiverEvent> {
+        let sender = ctx.data_unchecked::<Sender<river::Event>>().clone();
+        let rx = sender.subscribe();
+        let target_output = output_name;
+        let include_lists = tag_list.unwrap_or(false);
+        let tset = types.map(|v| v.into_iter().collect::<std::collections::HashSet<_>>());
+        BroadcastStream::new(rx).filter_map(move |item| {
+            let include_lists = include_lists;
+            let e = match item {
+                Ok(ev) => ev,
+                Err(_) => return ready(None),
+            };
+            let type_pass = tset
+                .as_ref()
+                .map_or(true, |ts| ts.contains(&RiverEventType::from(&e)));
+            let output_pass = event_matches_output_name(&e, &target_output);
+            if type_pass && output_pass {
+                ready(Some(make_river_event(e, include_lists)))
             } else {
                 ready(None)
             }

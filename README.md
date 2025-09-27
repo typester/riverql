@@ -43,14 +43,26 @@ Example query:
 ```graphql
 {
   outputs {
-    outputId
     name
     focusedTags
     viewTags
     urgentTags
     layoutName
   }
-  seatFocusedOutput { outputId name }
+  seatFocusedOutput { name }
+}
+```
+
+Fetch a single output by name when you only care about one:
+
+```graphql
+query ($name: String!, $tagList: Boolean = true) {
+  output(name: $name, tagList: $tagList) {
+    name
+    focusedTags
+    focusedTagsList
+    layoutName
+  }
 }
 ```
 
@@ -58,23 +70,51 @@ Subscription example:
 
 ```graphql
 subscription {
-  riverEvents {
+  events {
     __typename
-    ... on OutputFocusedTags { outputId name tags }
-    ... on SeatFocusedOutput { outputId name }
+    ... on OutputFocusedTags { name tags }
+    ... on SeatFocusedOutput { name }
   }
 }
 ```
 
-### WebSocket Client Mode
 
-### Client mode
+## Working with Tag Lists
+
+By default RiverQL exposes tag bitmasks as river does. Some environments — notably [eww](https://elkowar.github.io/eww/) —
+struggle with bit operations, so any query or subscription can opt into decoded
+lists by passing `tagList: true`.
+When enabled, `focusedTagsList` / `urgentTagsList` fields become non-null while
+the original mask fields remain available for backward compatibility.
+
+```graphql
+query ($tagList: Boolean = true) {
+  outputs(tagList: $tagList) {
+    name
+    focusedTags
+    focusedTagsList
+    urgentTags
+    urgentTagsList
+  }
+}
+```
+
+```graphql
+subscription ($name: String!, $tagList: Boolean = true) {
+  eventsForOutput(outputName: $name, tagList: $tagList) {
+    __typename
+    ... on OutputFocusedTags { name tags tagsList }
+  }
+}
+```
+
+### Client Mode
 
 When a widget or script (for example an eww widget) needs data, invoke `riverql`
 without `--server`:
 
 ```bash
-riverql 'subscription { riverEvents { __typename } }'
+riverql 'subscription { events { __typename } }'
 ```
 
 Key points:
@@ -94,7 +134,7 @@ Polling a query:
 
 ```clojure
 (defpoll river_outputs :interval "5s"
-  "riverql 'query { outputs { outputId name focusedTags } }' | jq -c '.data.outputs'")
+  "riverql 'query { outputs { name focusedTags } }' | jq --unbuffered -c '.data.outputs'")
 
 (defwidget river-tags []
   (box :orientation "vertical"
@@ -107,12 +147,12 @@ Polling a query:
 Listening for live events:
 
 ```clojure
-(deflisten river_events :initial "{}"
-  "riverql 'subscription { riverEvents { __typename ... on OutputFocusedTags { outputId name tags } } }' | jq -c '.data.riverEvents'")
+(deflisten events :initial "{}"
+  "riverql 'subscription { events { __typename ... on OutputFocusedTags { name tags } } }' | jq --unbuffered  -c '.data.events'")
 
 (defwidget river-event-feed []
   (box :orientation "vertical"
-    (label :text (format "Latest event: %s" river_events))))
+    (label :text (format "Latest event: %s" events))))
 ```
 
 `defpoll` is ideal for periodic snapshots (e.g. populating a list of outputs),
