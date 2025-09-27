@@ -1,6 +1,9 @@
 use async_graphql::futures_util::future::ready;
 use async_graphql::futures_util::{Stream, StreamExt, stream};
-use async_graphql::{Context, EmptyMutation, Enum, ID, Object, Schema, Subscription, Union};
+use async_graphql::parser::types::{FragmentDefinition, Selection, SelectionSet};
+use async_graphql::{
+    Context, EmptyMutation, Enum, ID, Name, Object, Positioned, Schema, Subscription, Union,
+};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast::Sender;
@@ -345,6 +348,91 @@ impl RiverSnapshot {
         }
 
         events
+    }
+}
+
+fn collect_requested_event_types(
+    fragments: &HashMap<Name, Positioned<FragmentDefinition>>,
+    selection_set: &SelectionSet,
+    out: &mut HashSet<RiverEventType>,
+    visited: &mut HashSet<Name>,
+) {
+    for selection in &selection_set.items {
+        match &selection.node {
+            Selection::Field(field) => {
+                collect_requested_event_types(
+                    fragments,
+                    &field.node.selection_set.node,
+                    out,
+                    visited,
+                );
+            }
+            Selection::InlineFragment(fragment) => {
+                if let Some(condition) = &fragment.node.type_condition {
+                    for ty in event_types_for_name(condition.node.on.node.as_str()) {
+                        out.insert(ty);
+                    }
+                }
+                collect_requested_event_types(
+                    fragments,
+                    &fragment.node.selection_set.node,
+                    out,
+                    visited,
+                );
+            }
+            Selection::FragmentSpread(spread) => {
+                let name = spread.node.fragment_name.node.clone();
+                if !visited.insert(name.clone()) {
+                    continue;
+                }
+                if let Some(fragment) = fragments.get(&name) {
+                    for ty in
+                        event_types_for_name(fragment.node.type_condition.node.on.node.as_str())
+                    {
+                        out.insert(ty);
+                    }
+                    collect_requested_event_types(
+                        fragments,
+                        &fragment.node.selection_set.node,
+                        out,
+                        visited,
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn requested_event_types(ctx: &Context<'_>) -> Option<HashSet<RiverEventType>> {
+    let selection_set = &ctx.item.node.selection_set.node;
+    if selection_set.items.is_empty() {
+        return None;
+    }
+    let mut out = HashSet::new();
+    let mut visited = HashSet::new();
+    collect_requested_event_types(
+        &ctx.query_env.fragments,
+        selection_set,
+        &mut out,
+        &mut visited,
+    );
+    if out.is_empty() { None } else { Some(out) }
+}
+
+fn event_types_for_name(name: &str) -> Vec<RiverEventType> {
+    match name {
+        "OutputFocusedTags" => vec![RiverEventType::OutputFocusedTags],
+        "OutputViewTags" => vec![RiverEventType::OutputViewTags],
+        "OutputUrgentTags" => vec![RiverEventType::OutputUrgentTags],
+        "OutputLayoutName" => vec![
+            RiverEventType::OutputLayoutName,
+            RiverEventType::OutputLayoutNameClear,
+        ],
+        "SeatFocusedOutput" => vec![RiverEventType::SeatFocusedOutput],
+        "SeatUnfocusedOutput" => vec![RiverEventType::SeatUnfocusedOutput],
+        "SeatFocusedView" => vec![RiverEventType::SeatFocusedView],
+        "SeatMode" => vec![RiverEventType::SeatMode],
+        _ => Vec::new(),
     }
 }
 
@@ -734,7 +822,9 @@ impl SubscriptionRoot {
         let sender = ctx.data_unchecked::<Sender<river::Event>>().clone();
         let rx = sender.subscribe();
         let include_lists = tag_list.unwrap_or(false);
-        let tset = types.map(|v| v.into_iter().collect::<HashSet<_>>());
+        let tset = types
+            .map(|v| v.into_iter().collect::<HashSet<_>>())
+            .or_else(|| requested_event_types(ctx));
         let initial_events = {
             let handle = ctx.data_unchecked::<RiverStateHandle>();
             match handle.read() {
@@ -770,7 +860,9 @@ impl SubscriptionRoot {
         let sender = ctx.data_unchecked::<Sender<river::Event>>().clone();
         let rx = sender.subscribe();
         let include_lists = tag_list.unwrap_or(false);
-        let tset = types.map(|v| v.into_iter().collect::<HashSet<_>>());
+        let tset = types
+            .map(|v| v.into_iter().collect::<HashSet<_>>())
+            .or_else(|| requested_event_types(ctx));
         let target_output = output_name;
         let initial_events = {
             let handle = ctx.data_unchecked::<RiverStateHandle>();
