@@ -16,7 +16,8 @@ panel.
 This indicates that:
 - Tags 1 and 3 are focused.
 - Tags 1, 2, 3, and 0 are currently occupied.
-- No urgent tags are present.
+- Urgent event comes up in tag 9.
+- Focused view is Emacs.
 
 Try it by copying the directory into your own eww config (`~/.config/eww`) or
 by running `eww --config ./examples/eww open bar-window-1` inside the repository while the
