@@ -18,6 +18,7 @@ pub enum RiverEventType {
     OutputUrgentTags,
     OutputLayoutName,
     OutputLayoutNameClear,
+    OutputRemoved,
     SeatFocusedOutput,
     SeatUnfocusedOutput,
     SeatFocusedView,
@@ -33,6 +34,7 @@ impl From<&river::Event> for RiverEventType {
             OutputUrgentTags { .. } => RiverEventType::OutputUrgentTags,
             OutputLayoutName { .. } => RiverEventType::OutputLayoutName,
             OutputLayoutNameClear { .. } => RiverEventType::OutputLayoutNameClear,
+            OutputRemoved { .. } => RiverEventType::OutputRemoved,
             SeatFocusedOutput { .. } => RiverEventType::SeatFocusedOutput,
             SeatUnfocusedOutput { .. } => RiverEventType::SeatUnfocusedOutput,
             SeatFocusedView { .. } => RiverEventType::SeatFocusedView,
@@ -221,6 +223,25 @@ impl RiverSnapshot {
                 self.update_output_state(id, name, |state| {
                     state.layout_name = None;
                 });
+            }
+            OutputRemoved { id, name } => {
+                let gql_id = id_to_graphql(id);
+                let key = gql_id.to_string();
+                if let Some(state) = self.outputs.remove(&key) {
+                    if let Some(name_value) = state.name {
+                        self.output_names.remove(&name_value);
+                    }
+                } else if let Some(name_value) = name.as_ref() {
+                    self.output_names.remove(name_value);
+                }
+                let clear_focus = self
+                    .seat_focused_output
+                    .as_ref()
+                    .map(|focused| focused.output_id == gql_id)
+                    .unwrap_or(false);
+                if clear_focus {
+                    self.seat_focused_output = None;
+                }
             }
             SeatFocusedOutput { id, name } => {
                 self.seat_focused_output = Some(NamedOutputId {
@@ -444,6 +465,7 @@ fn event_types_for_name(name: &str) -> Vec<RiverEventType> {
             RiverEventType::OutputLayoutName,
             RiverEventType::OutputLayoutNameClear,
         ],
+        "OutputRemoved" => vec![RiverEventType::OutputRemoved],
         "SeatFocusedOutput" => vec![RiverEventType::SeatFocusedOutput],
         "SeatUnfocusedOutput" => vec![RiverEventType::SeatUnfocusedOutput],
         "SeatFocusedView" => vec![RiverEventType::SeatFocusedView],
@@ -473,6 +495,7 @@ fn event_output_name<'a>(event: &'a river::Event) -> Option<&'a str> {
         | OutputUrgentTags { name, .. }
         | OutputLayoutName { name, .. }
         | OutputLayoutNameClear { name, .. }
+        | OutputRemoved { name, .. }
         | SeatFocusedOutput { name, .. }
         | SeatUnfocusedOutput { name, .. } => name.as_deref(),
 
@@ -527,6 +550,7 @@ pub enum RiverEvent {
     OutputViewTags(GOutputViewTags),
     OutputUrgentTags(GOutputUrgentTags),
     OutputLayoutName(GOutputLayoutName),
+    OutputRemoved(GOutputRemoved),
     SeatFocusedOutput(GSeatFocusedOutput),
     SeatUnfocusedOutput(GSeatUnfocusedOutput),
     SeatFocusedView(GSeatFocusedView),
@@ -629,6 +653,22 @@ impl GOutputLayoutName {
 
     async fn output_name(&self) -> Option<&str> {
         self.output_name.as_deref()
+    }
+}
+
+#[derive(Clone)]
+pub struct GOutputRemoved {
+    pub output_id: ID,
+    pub name: Option<String>,
+}
+#[Object(name = "OutputRemoved")]
+impl GOutputRemoved {
+    async fn output_id(&self) -> &ID {
+        &self.output_id
+    }
+
+    async fn name(&self) -> Option<&str> {
+        self.name.as_deref()
     }
 }
 
@@ -745,6 +785,13 @@ fn make_river_event(value: river::Event, include_lists: bool) -> RiverEvent {
             output_id: id_to_graphql(&output_id),
             output_name: name,
             layout: String::new(),
+        }),
+        OutputRemoved {
+            id: output_id,
+            name,
+        } => RiverEvent::OutputRemoved(GOutputRemoved {
+            output_id: id_to_graphql(&output_id),
+            name,
         }),
         SeatFocusedOutput {
             id: output_id,
