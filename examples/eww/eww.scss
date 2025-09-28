@@ -1,0 +1,52 @@
+* {
+  all: unset;
+  font-family: "Terminess Nerd Font Propo";
+  font-size: 12pt;
+}
+
+.bar {
+    margin: 0px;
+    padding: 0px 0px;
+    background-color: #1a1b26;
+
+    .bar-right {
+        margin: 0 8px;
+    }
+
+    .arch-logo {
+        //color: #1793d0;
+        margin-left: 6px;
+        font-size: 16px;
+        font-weight: normal;
+    }
+
+    .taglist {
+        margin-left: 20px;
+
+        .focused {
+            background-color: #fefefe;
+
+            .tag-text {
+                color: black;
+            }
+
+            .occupied {
+                border: 1px solid black;
+            }
+        }
+
+        .urgent {
+            background-color: red;
+        }
+
+        .occupied {
+            margin-top: 2px;
+            margin-left: 2px;
+            border: 1px solid #ccc;
+        }
+    }
+
+    .focused_view {
+        margin-left: 20px;
+    }
+}

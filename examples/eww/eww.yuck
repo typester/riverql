@@ -1,0 +1,87 @@
+(deflisten river-focused-view :initial "{}"
+           "riverql 'subscription { events { ... on SeatFocusedView { title }}}'")
+
+;; DP-1
+(deflisten river-view-tags-1 :initial "[]"
+           `riverql 'subscription { eventsForOutput(outputName: "DP-1", tagList: true) { ... on OutputViewTags { tagsList }}}' | jq --unbuffered -c '[range(0;10) as $i | any(.data.eventsForOutput.tagsList[]; . == $i)]'`)
+
+(deflisten river-focused-tags-1 :initial "[]"
+           `riverql 'subscription { eventsForOutput(outputName: "DP-1", tagList: true) { ... on OutputFocusedTags { tagsList }}}' | jq --unbuffered -c '[range(0;10) as $i | any(.data.eventsForOutput.tagsList[]; . == $i)]'`)
+
+(deflisten river-urgent-tags-1 :initial "[]"
+           `riverql 'subscription { eventsForOutput(outputName: "DP-1", tagList: true) { ... on OutputUrgentTags { tagsList }}}' | jq --unbuffered -c '[range(0;10) as $i | any(.data.eventsForOutput.tagsList[]; . == $i)]'`)
+
+;; DP-2
+(deflisten river-view-tags-2 :initial "[]"
+           `riverql 'subscription { eventsForOutput(outputName: "DP-2", tagList: true) { ... on OutputViewTags { tagsList }}}' | jq --unbuffered -c '[range(0;10) as $i | any(.data.eventsForOutput.tagsList[]; . == $i)]'`)
+
+(deflisten river-focused-tags-2 :initial "[]"
+           `riverql 'subscription { eventsForOutput(outputName: "DP-2", tagList: true) { ... on OutputFocusedTags { tagsList }}}' | jq --unbuffered -c '[range(0;10) as $i | any(.data.eventsForOutput.tagsList[]; . == $i)]'`)
+
+(deflisten river-urgent-tags-2 :initial "[]"
+           `riverql 'subscription { eventsForOutput(outputName: "DP-2", tagList: true) { ... on OutputUrgentTags { tagsList }}}' | jq --unbuffered -c '[range(0;10) as $i | any(.data.eventsForOutput.tagsList[]; . == $i)]'`)
+
+
+
+(defwidget focused-view []
+  (label :text `${river-focused-view.data.events.title ?: ""}` :halign "start" :hexpand true :class "focused_view"))
+
+(defwidget river-tags [focused-tags urgent-tags view-tags]
+  (box :orientation "h" :spacing 10 :halign "start" :class "taglist"
+    (for i in `[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]`
+         (tag :index i
+              :focused-tags focused-tags
+              :urgent-tags urgent-tags
+              :view-tags view-tags))))
+
+(defwidget tag [index focused-tags urgent-tags view-tags]
+           (box :class `${urgent-tags[index] ? "urgent" : focused-tags[index] ? "focused" : ""}`
+                (overlay
+                 (box :width 32 :height 18)
+                 (literal :content `${view-tags[index] ?
+ '(box :halign "start" :valign "start"
+     (box :class "occupied" :width 7 :height 7))' : ""}`)
+                 (label :text `${index == 9 ? "0" : index + 1}` :class "tag-text"))))
+
+(defwidget bar-left [focused-tags urgent-tags view-tags]
+           (box :orientation "h" :halign "start" :hexpand true :space-evenly false
+                (label :text "" :class "arch-logo")
+                (river-tags :focused-tags focused-tags :urgent-tags urgent-tags :view-tags view-tags)
+                (focused-view)))
+
+(defwidget bar-right []
+           (box :orientation "h" :halign "end" :class "bar-right"
+                (systray :icon-size 16)))
+
+(defwidget bar [focused-tags urgent-tags view-tags]
+           (box :orientation "h" :space-evenly false :class "bar" :width: "100%"
+                (bar-left :focused-tags focused-tags :urgent-tags urgent-tags :view-tags view-tags)
+                (bar-right)))
+
+(defwindow bar-window-1
+  :monitor 0
+  :geometry (geometry :x "0"
+                      :y "0"
+                      :width "100%"
+                      :height "32px"
+                      :anchor "top center")
+  :stacking "fg"
+  :exclusive true
+  :focusable false
+  (bar :focused-tags river-focused-tags-1
+       :urgent-tags river-urgent-tags-1
+       :view-tags river-view-tags-1))
+
+(defwindow bar-window-2
+  :monitor 1
+  :geometry (geometry :x "0"
+                      :y "0"
+                      :width "100%"
+                      :height "32px"
+                      :anchor "top center")
+  :stacking "fg"
+  :exclusive true
+  :focusable false
+  (bar :focused-tags river-focused-tags-2
+       :urgent-tags river-urgent-tags-2
+       :view-tags river-view-tags-2))

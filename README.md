@@ -4,6 +4,22 @@ RiverQL exposes [River window manager](https://isaacfreund.com/software/river/) 
 It ships a server that bridges River's Wayland status protocol into GraphQL queries and
 subscriptions, plus a CLI client for driving `graphql-transport-ws` streams.
 
+## Example Status Bar (eww)
+
+`examples/eww` contains a ready-to-run setup that wires RiverQL into an
+[eww](https://elkowar.github.io/eww/) status bar. The example launches a snapshot
+poller for river outputs, reacts to live tag updates, and renders the result as a
+panel.
+
+![eww status bar preview](examples/eww/eww-bar.png)
+
+Try it by copying the directory into your own eww config (`~/.config/eww`) or
+by running `eww --config ./examples/eww open bar-window-1` inside the repository while the
+RiverQL server is running.
+
+This example supports multiple monitors. Open `bar-window-1` for DP-1, `bar-window-2` for DP-2 respectively.
+If your environment has a different name e.g. eDP-1, you need to modify the code.
+
 ## Features
 
 - GraphQL access to River output/seat state (tags, layouts, focused view, mode)
