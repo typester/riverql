@@ -4,7 +4,7 @@ RiverQL exposes [River window manager](https://isaacfreund.com/software/river/) 
 It ships a server that bridges River's Wayland status protocol into GraphQL queries and
 subscriptions, plus a CLI client for driving `graphql-transport-ws` streams.
 
-## Example Status Bar (eww)
+## Example Status Bar (eww + RiverQL)
 
 `examples/eww` contains a ready-to-run setup that wires RiverQL into an
 [eww](https://elkowar.github.io/eww/) status bar. The example launches a snapshot
@@ -12,6 +12,11 @@ poller for river outputs, reacts to live tag updates, and renders the result as 
 panel.
 
 ![eww status bar preview](examples/eww/eww-bar.png)
+
+This indicates that:
+- Tags 1 and 3 are focused.
+- Tags 1, 2, 3, and 0 are currently occupied.
+- No urgent tags are present.
 
 Try it by copying the directory into your own eww config (`~/.config/eww`) or
 by running `eww --config ./examples/eww open bar-window-1` inside the repository while the
