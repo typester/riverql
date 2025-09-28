@@ -15,11 +15,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other
 
-- oops
-- update README
-- update image and example
-- add more description
-- add more description
 - add eww example
 
 ## [0.2.2](https://github.com/typester/riverql/compare/v0.2.1...v0.2.2) - 2025-09-27
