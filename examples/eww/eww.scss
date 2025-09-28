@@ -1,7 +1,7 @@
 * {
   all: unset;
   font-family: "Terminess Nerd Font Propo";
-  font-size: 12pt;
+  font-size: 11pt;
 }
 
 .bar {
@@ -15,13 +15,18 @@
 
     .arch-logo {
         //color: #1793d0;
-        margin-left: 6px;
+        margin-left: 12px;
         font-size: 16px;
         font-weight: normal;
     }
 
+    .sep {
+        color: #999;
+    }
+
     .taglist {
         margin-left: 20px;
+        margin-right: 10px;
 
         .focused {
             background-color: #fefefe;
