@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
@@ -52,6 +52,10 @@ pub enum Event {
         id: ObjectId,
         name: Option<String>,
     },
+    OutputRemoved {
+        id: ObjectId,
+        name: Option<String>,
+    },
 
     SeatFocusedOutput {
         id: ObjectId,
@@ -70,8 +74,8 @@ pub enum Event {
 }
 
 struct State {
-    outputs: Vec<WlOutput>,
-    seats: Vec<WlSeat>,
+    outputs: HashMap<u32, WlOutput>,
+    seats: HashMap<u32, WlSeat>,
     manager: Option<ZriverStatusManagerV1>,
     output_statuses: Vec<ZriverOutputStatusV1>,
     seat_statuses: Vec<ZriverSeatStatusV1>,
@@ -83,8 +87,8 @@ struct State {
 impl State {
     fn new(tx: UnboundedSender<Event>) -> Self {
         Self {
-            outputs: Vec::new(),
-            seats: Vec::new(),
+            outputs: HashMap::new(),
+            seats: HashMap::new(),
             manager: None,
             output_statuses: Vec::new(),
             seat_statuses: Vec::new(),
@@ -115,13 +119,13 @@ impl State {
 
     fn create_status_for_all(&mut self, qh: &QueueHandle<Self>) {
         if self.manager.is_some() {
-            let outs = self.outputs.clone();
-            for o in &outs {
-                self.maybe_create_status_for_output(qh, o);
+            let outputs: Vec<_> = self.outputs.values().cloned().collect();
+            for output in &outputs {
+                self.maybe_create_status_for_output(qh, output);
             }
-            let seats = self.seats.clone();
-            for s in &seats {
-                self.maybe_create_status_for_seat(qh, s);
+            let seats: Vec<_> = self.seats.values().cloned().collect();
+            for seat in &seats {
+                self.maybe_create_status_for_seat(qh, seat);
             }
         }
     }
@@ -188,15 +192,13 @@ impl Dispatch<WlRegistry, ()> for State {
             } => match interface.as_str() {
                 "wl_output" => {
                     let output = registry.bind::<WlOutput, _, _>(name, version.min(4), qh, ());
-                    state.outputs.push(output);
-                    let last = state.outputs.last().unwrap().clone();
-                    state.maybe_create_status_for_output(qh, &last);
+                    state.maybe_create_status_for_output(qh, &output);
+                    state.outputs.insert(name, output);
                 }
                 "wl_seat" => {
                     let seat = registry.bind::<WlSeat, _, _>(name, version.min(5), qh, ());
-                    state.seats.push(seat);
-                    let last = state.seats.last().unwrap().clone();
-                    state.maybe_create_status_for_seat(qh, &last);
+                    state.maybe_create_status_for_seat(qh, &seat);
+                    state.seats.insert(name, seat);
                 }
                 "zriver_status_manager_v1" => {
                     let mgr =
@@ -206,6 +208,11 @@ impl Dispatch<WlRegistry, ()> for State {
                 }
                 _ => {}
             },
+            wl_registry::Event::GlobalRemove { name } => {
+                if !state.remove_output(name) {
+                    state.seats.remove(&name);
+                }
+            }
             _ => {}
         }
     }
@@ -342,6 +349,31 @@ fn parse_u32_array(bytes: &[u8]) -> Vec<u32> {
         i += 4;
     }
     v
+}
+
+impl State {
+    fn remove_output(&mut self, global: u32) -> bool {
+        let Some(output) = self.outputs.remove(&global) else {
+            return false;
+        };
+        let id = output.id();
+        let label = self.output_label(&id);
+        let protocol_id = id.protocol_id();
+
+        let mut removed_status_ids = HashSet::new();
+        for (status_id, owner) in &self.output_status_owner {
+            if owner.protocol_id() == protocol_id {
+                removed_status_ids.insert(*status_id);
+            }
+        }
+        self.output_status_owner
+            .retain(|status_id, _| !removed_status_ids.contains(status_id));
+        self.output_statuses
+            .retain(|status| !removed_status_ids.contains(&status.id().protocol_id()));
+        self.output_info.remove(&protocol_id);
+        let _ = self.tx.send(Event::OutputRemoved { id, name: label });
+        true
+    }
 }
 
 pub struct RiverStatus;
