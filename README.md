@@ -47,6 +47,9 @@ Most setups launch the server inside River's init script:
 riverql --server &
 ```
 
+Note that you might need to set this with full executable path like: `~/.cargo/bin/riverql --server &`.
+
+
 By default this creates a Unix socket under `$XDG_RUNTIME_DIR/riverql.sock`. To
 override, use `--listen`, e.g. `riverql --server --listen tcp://127.0.0.1:8080`.
 
