@@ -47,7 +47,7 @@
            (box :orientation "h" :halign "start" :hexpand true :space-evenly false
                 (label :text "" :class "arch-logo")
                 (river-tags :focused-tags focused-tags :urgent-tags urgent-tags :view-tags view-tags)
-                (label :text "|" :class "sep"))
+                (label :text "|" :class "sep")
                 (focused-view)))
 
 (defwidget bar-right []
