@@ -28,7 +28,11 @@ pub async fn run(listen: ListenTarget) -> Result<()> {
         .finish();
 
     info!("connecting to river status stream");
-    let mut river_rx = river::RiverStatus::subscribe().map_err(|e| anyhow!(e.to_string()))?;
+    let (mut river_rx, river_ready) =
+        river::RiverStatus::subscribe().map_err(|e| anyhow!(e.to_string()))?;
+    river_ready
+        .await
+        .map_err(|e| anyhow!("river status initialization failed: {}", e))?;
     info!("river status stream connected");
     let tx_for_events = tx.clone();
     let state_for_events = river_state.clone();
