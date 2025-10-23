@@ -1,6 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
-use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio::sync::{
+    mpsc::{self, UnboundedReceiver, UnboundedSender},
+    oneshot,
+};
 
 use wayland_client::protocol::{
     wl_output::{self, WlOutput},
@@ -82,10 +85,11 @@ struct State {
     tx: UnboundedSender<Event>,
     output_info: HashMap<u32, OutputInfo>,
     output_status_owner: HashMap<u32, ObjectId>,
+    ready: Option<oneshot::Sender<()>>,
 }
 
 impl State {
-    fn new(tx: UnboundedSender<Event>) -> Self {
+    fn new(tx: UnboundedSender<Event>, ready: oneshot::Sender<()>) -> Self {
         Self {
             outputs: HashMap::new(),
             seats: HashMap::new(),
@@ -95,6 +99,7 @@ impl State {
             tx,
             output_info: HashMap::new(),
             output_status_owner: HashMap::new(),
+            ready: Some(ready),
         }
     }
 
@@ -205,6 +210,9 @@ impl Dispatch<WlRegistry, ()> for State {
                         registry.bind::<ZriverStatusManagerV1, _, _>(name, version.min(4), qh, ());
                     state.manager = Some(mgr);
                     state.create_status_for_all(qh);
+                    if let Some(sender) = state.ready.take() {
+                        let _ = sender.send(());
+                    }
                 }
                 _ => {}
             },
@@ -379,11 +387,13 @@ impl State {
 pub struct RiverStatus;
 
 impl RiverStatus {
-    pub fn subscribe() -> Result<UnboundedReceiver<Event>, Box<dyn std::error::Error>> {
+    pub fn subscribe()
+    -> Result<(UnboundedReceiver<Event>, oneshot::Receiver<()>), Box<dyn std::error::Error>> {
         let conn = Connection::connect_to_env()?;
         let (tx, rx) = mpsc::unbounded_channel();
+        let (ready_tx, ready_rx) = oneshot::channel();
 
-        let mut state = State::new(tx);
+        let mut state = State::new(tx, ready_tx);
         let mut event_queue: EventQueue<State> = conn.new_event_queue();
         let qh = event_queue.handle();
 
@@ -401,6 +411,6 @@ impl RiverStatus {
             }
         });
 
-        Ok(rx)
+        Ok((rx, ready_rx))
     }
 }
